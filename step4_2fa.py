@@ -376,8 +376,8 @@ class Instagram2FAStep:
                 print("   [Step 4] Code not found. Clicking 'Get new code'...")
                 self.driver.execute_script("var a=document.querySelectorAll('span, div[role=\"button\"]'); for(var e of a){if(e.innerText.toLowerCase().includes('get a new code')){e.click();break;}}")
                 # Poll for new code
-                for poll in range(5):
-                    time.sleep(3)
+                for poll in range(3):
+                    time.sleep(2)
                     code = get_2fa_code_v2(gmx_user, gmx_pass, target_ig_username)
                     if code: break
                 if not code:
@@ -387,6 +387,7 @@ class Instagram2FAStep:
             print(f"   [Step 4] Inputting Code: {code}")
             if self._robust_fill_input(code):
                 self._click_continue_robust()
+                time.sleep(1)  # Chờ UI update sau click
                 is_wrong_code = False
                 print("   [Step 4] Verifying...")
                 time.sleep(2)
@@ -399,7 +400,9 @@ class Instagram2FAStep:
                         checkpoint_passed = True; print("   [Step 4] Checkpoint Passed!"); break
                     
                     err_msg = self.driver.execute_script("return document.body.innerText.toLowerCase()")
-                    if "isn't right" in err_msg or "không đúng" in err_msg or "incorrect" in err_msg:
+                    if ("isn't right" in err_msg or "không đúng" in err_msg or "incorrect" in err_msg or 
+                        "the code you entered" in err_msg or "mã bạn đã nhập" in err_msg or "wrong code" in err_msg or 
+                        "code is invalid" in err_msg or "mã không hợp lệ" in err_msg):
                         print(f"   [WARNING] Code {code} REJECTED."); is_wrong_code = True; break
                     
                     print("   [Step 4] Not verified yet, retrying confirm...")
@@ -418,8 +421,8 @@ class Instagram2FAStep:
                     self.driver.execute_script("var a=document.querySelectorAll('span, div[role=\"button\"]'); for(var e of a){if(e.innerText.toLowerCase().includes('get a new code')){e.click();break;}}")
                     # Chờ mail mới với poll
                     print("   [Step 4] Waiting for new code in mail...")
-                    for poll in range(5):  # Poll 5 lần, mỗi lần 3s
-                        time.sleep(3)
+                    for poll in range(3):  # Poll 3 lần, mỗi lần 2s
+                        time.sleep(2)
                         new_code = get_2fa_code_v2(gmx_user, gmx_pass, target_ig_username)
                         if new_code and new_code != code:  # Đảm bảo code mới khác code cũ
                             print(f"   [Step 4] New code received: {new_code}")
@@ -534,41 +537,32 @@ class Instagram2FAStep:
     def _robust_fill_input(self, text_value):
         val = str(text_value).strip()
         try:
-            # Tìm và nhập input hoàn toàn bằng JS để nhanh và chính xác
-            result = self.driver.execute_script("""
-                var val = arguments[0];
+            # Tìm input bằng JS
+            input_el = self.driver.execute_script("""
                 var inputs = document.querySelectorAll('input');
-                var targetInput = null;
-                
-                // Ưu tiên input có name='code' hoặc placeholder chứa 'code'
                 for (var inp of inputs) {
                     if (inp.offsetParent !== null) {
                         var name = inp.name.toLowerCase();
                         var placeholder = inp.placeholder ? inp.placeholder.toLowerCase() : '';
-                        if (name === 'code' || placeholder.includes('code') || inp.type === 'tel' || inp.maxLength == 6) {
-                            targetInput = inp;
-                            break;
+                        var id = inp.id ? inp.id.toLowerCase() : '';
+                        if (name === 'code' || placeholder.includes('code') || inp.type === 'tel' || inp.maxLength == 6 || id.startsWith('_r_') || (inp.type === 'text' && inp.autocomplete === 'off')) {
+                            return inp;
                         }
                     }
                 }
-                
-                if (!targetInput) return false;
-                
-                // Focus và clear input
-                targetInput.focus();
-                targetInput.value = '';
-                
-                // Set value
-                targetInput.value = val;
-                
-                // Dispatch events để trigger validation
-                targetInput.dispatchEvent(new Event('input', {bubbles: true}));
-                targetInput.dispatchEvent(new Event('change', {bubbles: true}));
-                
-                // Kiểm tra value được set đúng
-                return targetInput.value.replace(/ /g, '') === val;
-            """, val)
-            return result
+                return null;
+            """)
+            if not input_el:
+                return False
+            
+            # Nhập từng ký tự với delay để mô phỏng nhập thật
+            ActionChains(self.driver).move_to_element(input_el).click().perform()
+            input_el.clear()
+            for char in val:
+                input_el.send_keys(char)
+                time.sleep(0.1)  # Delay 0.1s giữa mỗi ký tự
+            time.sleep(0.5)  # Chờ sau khi nhập xong
+            return input_el.get_attribute("value").replace(" ", "") == val
         except Exception as e:
-            print(f"   [Step 4] JS input fill failed: {e}")
+            print(f"   [Step 4] Input fill failed: {e}")
             return False
