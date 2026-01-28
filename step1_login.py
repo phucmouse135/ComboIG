@@ -197,11 +197,24 @@ class InstagramLoginStep:
         """
         try:
             wait_dom_ready(self.driver, timeout=10)
-            body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+            try:
+                body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+            except Exception as e:
+                if "stale" in str(e).lower():
+                    print("   [Step 1] Stale element when getting body text, retrying...")
+                    time.sleep(1)
+                    try:
+                        body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                    except Exception as e2:
+                        return "LOGGED_IN_UNKNOWN_STATE"
+                else:
+                    return f"ERROR_DETECT: {str(e)}"
             
             if "choose a way to recover" in body_text:
                 return "RECOVERY_CHALLENGE"
             # 1. Các trường hợp Exception / Checkpoint
+            if "enter the 6-digit code" in body_text and ("email" in body_text or "mail" in body_text):
+                return "CHECKPOINT_MAIL"
             if "check your email" in body_text or " we sent to the email address" in body_text:
                 return "CHECKPOINT_MAIL"
             

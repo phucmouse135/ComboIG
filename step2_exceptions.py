@@ -96,13 +96,13 @@ class InstagramExceptionStep:
             ]
             for by, sel in next_selectors:
                 try:
-                    next_btns = self.driver.execute_script(f"return Array.from(document.querySelectorAll('{sel}'));")
+                    next_btns = self.driver.find_elements(by, sel)
                     for btn in next_btns:
                         if btn.is_displayed():
-                            if wait_and_click(self.driver, by, sel, timeout=20):
-                                print(f"   [Step 2] Clicked Next after password change via selector: {sel}")
-                                next_clicked = True
-                                break
+                            btn.click()
+                            print(f"   [Step 2] Clicked Next after password change via selector: {sel}")
+                            next_clicked = True
+                            break
                     if next_clicked:
                         break
                 except Exception as e:
@@ -289,7 +289,15 @@ class InstagramExceptionStep:
             print("   [Step 2] Handling Require Password Change...")
             if ig_password :
                 new_pass = ig_password + "@"
-                self._handle_require_password_change(new_pass)
+                try:
+                    self._handle_require_password_change(new_pass)
+                except Exception as e:
+                    print(f"   [Step 2] Error in _handle_require_password_change: {e}")
+                    # If error, try to recover by refreshing
+                    self.driver.get("https://www.instagram.com/")
+                    wait_dom_ready(self.driver, timeout=20)
+                    time.sleep(2)
+                    raise e  # Re-raise to stop flow
                 if time.time() - start_time > TIMEOUT:
                     raise Exception("TIMEOUT_REQUIRE_PASSWORD_CHANGE: End")
                 # Cập nhật lại password mới lên GUI NGAY LẬP TỨC trước khi gọi các bước tiếp theo
@@ -309,6 +317,41 @@ class InstagramExceptionStep:
                 return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
             else:
                 raise Exception("STOP_FLOW_REQUIRE_PASSWORD_CHANGE: No password provided")
+
+        if status == "CHANGE_PASSWORD":
+            # Timeout protection for change password (max 180s)
+            start_time = time.time()
+            TIMEOUT = 180
+            print("   [Step 2] Handling Change Password...")
+            if ig_password:
+                new_pass = ig_password + "@"
+                try:
+                    self._handle_require_password_change(new_pass)
+                except Exception as e:
+                    print(f"   [Step 2] Error in _handle_require_password_change for CHANGE_PASSWORD: {e}")
+                    # If error, try to recover by refreshing
+                    self.driver.get("https://www.instagram.com/")
+                    wait_dom_ready(self.driver, timeout=20)
+                    time.sleep(2)
+                    raise e  # Re-raise to stop flow
+                if time.time() - start_time > TIMEOUT:
+                    raise Exception("TIMEOUT_CHANGE_PASSWORD: End")
+                # Cập nhật lại password mới lên GUI NGAY LẬP TỨC trước khi gọi các bước tiếp theo
+                if hasattr(self, "on_password_changed") and callable(self.on_password_changed):
+                    self.on_password_changed(ig_username, new_pass)
+                time.sleep(4)
+                wait_dom_ready(self.driver, timeout=20)
+                
+                # Đảm bảo các bước sau luôn dùng mật khẩu mới
+                ig_password = new_pass
+                new_status = self._check_verification_result()
+                print(f"   [Step 2] Status after Password Change: {new_status}")
+                # Anti-hang: If status unchanged, refresh to avoid loop
+                if new_status == status:
+                    self.driver.get("https://www.instagram.com/")
+                return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+            else:
+                raise Exception("STOP_FLOW_CHANGE_PASSWORD: No password provided")
     
 
         # XỬ LÝ BIRTHDAY
@@ -365,6 +408,10 @@ class InstagramExceptionStep:
         
 
         # NHÓM FAIL
+        if status == "WRONG_CODE":
+            print("   [Step 2] Wrong code detected. Retrying checkpoint...")
+            return self.handle_status("CHECKPOINT_MAIL", ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+        
         fail_statuses = [
             "UNUSUAL_LOGIN", "TRY_ANOTHER_DEVICE", "2FA_REQUIRED", "SUSPENDED",
             "LOGIN_FAILED_INCORRECT", "2FA_SMS", "2FA_WHATSAPP", "GET_HELP_LOG_IN",
