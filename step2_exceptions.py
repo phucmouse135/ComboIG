@@ -966,16 +966,16 @@ class InstagramExceptionStep:
             # Có thể thêm logic retry lại hàm này 1 lần nữa nếu cần thiết ở tầng gọi hàm
 
     def _check_verification_result(self):
-        # Timeout protection for verification result (max 30s)
+        # Timeout protection for verification result (max 60s)
         # Optimized with JS checks to avoid hangs and speed up detection
-        TIMEOUT = 30
+        TIMEOUT = 60
         end_time = time.time() + TIMEOUT
         consecutive_failures = 0
         max_consecutive_failures = 20  # If JS fails 20 times in a row, consider timeout
         try:
-            WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
         except Exception as e:
-            print(f"   [Step 2] Page not ready after 5s: {e}")
+            print(f"   [Step 2] Page not ready after 10s: {e}")
         while time.time() < end_time:
             try:
                 
@@ -1052,7 +1052,15 @@ class InstagramExceptionStep:
                 if consecutive_failures >= max_consecutive_failures:
                     print(f"   [Step 2] Too many JS failures in verification check: {e}")
                     break
-            time.sleep(0.5)
+            time.sleep(1.0)
+        # Log current state for debugging timeout
+        try:
+            current_url = self.driver.current_url
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text[:500]  # First 500 chars
+            print(f"   [Step 2] TIMEOUT reached. Current URL: {current_url}")
+            print(f"   [Step 2] Page body preview: {body_text}...")
+        except Exception as e:
+            print(f"   [Step 2] Error logging timeout state: {e}")
         return "TIMEOUT"
 
     def _fill_input_with_delay(self, input_el, text_value):
