@@ -129,10 +129,10 @@ class InstagramLoginStep:
             time.sleep(1)
         else:
             return "FAIL_LOGIN_BUTTON_TIMEOUT"
-
-        status = self._wait_for_login_result(timeout=120)
         wait_dom_ready(self.driver , timeout=10)
-        time.sleep(2)
+        time.sleep(4) # Chờ thêm vài giây để trang load sau khi nhấn Login
+        status = self._wait_for_login_result(timeout=120)
+        
         print(f"   [Step 1] Login result detected: {status}")
         return status
 
@@ -162,29 +162,8 @@ class InstagramLoginStep:
         while time.time() < end_time:
             status = self._detect_initial_status()
             
-            # [NEW] XỬ LÝ MÀN HÌNH "CHOOSE A WAY TO RECOVER" -> BẤM CONTINUE
-            if status == "RECOVERY_CHALLENGE":
-                print("   [Step 1] Detected Recovery Challenge. Clicking Continue...")
-                # Tìm nút Continue (Quét nhiều selector cho chắc)
-                continue_xpaths = [
-                    "//div[contains(text(), 'Continue')]", 
-                    "//span[contains(text(), 'Continue')]",
-                    "//button[contains(text(), 'Continue')]",
-                    "//div[text()='Continue']" 
-                ]
-                clicked = False
-                for xp in continue_xpaths:
-                    if wait_and_click(self.driver, By.XPATH, xp, timeout=2):
-                        clicked = True
-                        break
-                
-                if clicked:
-                    print("   [Step 1] Clicked Continue. Waiting for next step...")
-                    time.sleep(5) # Chờ load sau khi bấm
-                    continue # Quay lại đầu vòng lặp để check trạng thái mới
-            
             # Nếu status đã rõ ràng (không phải Unknown/Retry) -> Return ngay
-            if status not in ["LOGGED_IN_UNKNOWN_STATE", "LOGIN_FAILED_RETRY", "RECOVERY_CHALLENGE"]:
+            if status not in ["LOGGED_IN_UNKNOWN_STATE", "LOGIN_FAILED_RETRY"]:
                 return status
             
             time.sleep(0.5) 

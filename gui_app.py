@@ -158,6 +158,7 @@ class AutomationGUI:
         ttk.Button(bottom_frame, text="Clear All", command=self.clear_all_data).pack(side="left", padx=5)
         ttk.Separator(bottom_frame, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Button(bottom_frame, text="Export Success", command=lambda: self.export_data("success")).pack(side="left", padx=5)
+        ttk.Button(bottom_frame, text="Export Login Success (No 2FA)", command=lambda: self.export_data("login_success_no_2fa")).pack(side="left", padx=5)
         ttk.Button(bottom_frame, text="Export Failed", command=lambda: self.export_data("failed")).pack(side="left", padx=5)
         ttk.Button(bottom_frame, text="Export No Success", command=lambda: self.export_data("no_success")).pack(side="left", padx=5)
         ttk.Button(bottom_frame, text="Export All", command=lambda: self.export_data("all")).pack(side="left", padx=5)
@@ -540,6 +541,7 @@ class AutomationGUI:
                 should_export = False
                 if mode == "all": should_export = True
                 elif mode == "success" and "success" in note: should_export = True
+                elif mode == "login_success_no_2fa" and "success" in note and not vals[4].strip(): should_export = True
                 elif mode == "failed" and ("fail" in note or "error" in note): should_export = True
                 elif mode == "no_success" and "success" not in note: should_export = True
                 

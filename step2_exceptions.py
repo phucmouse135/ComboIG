@@ -181,6 +181,29 @@ class InstagramExceptionStep:
             if back_clicked:
                 return self.handle_status("CONTINUE_UNUSUAL_LOGIN", ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
             
+        # RECOVERY_CHALLENGE
+        if status == "RECOVERY_CHALLENGE":
+            print("   [Step 2] Handling Recovery Challenge...")
+            # Select email radio button
+            try:
+                email_radio = self.driver.find_element(By.CSS_SELECTOR, "input[type='radio'][value='EMAIL']")
+                email_radio.click()
+                print("   [Step 2] Selected email radio button.")
+            except Exception as e:
+                print(f"   [Step 2] Error selecting email radio: {e}")
+            
+            # Click continue
+            try:
+                wait_and_click(self.driver, By.XPATH, "//span[contains(text(), 'Continue')]", timeout=20)
+                print("   [Step 2] Clicked Continue.")
+            except Exception as e:
+                print(f"   [Step 2] Error clicking continue: {e}")
+            
+            time.sleep(2)
+            wait_dom_ready(self.driver, timeout=20)
+            new_status = self._check_verification_result()
+            return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+            
         # RETRY_UNSUAL_LOGIN
         if status == "RETRY_UNUSUAL_LOGIN":
             # call step 1 to login again with new data 
@@ -319,48 +342,44 @@ class InstagramExceptionStep:
                 raise Exception("STOP_FLOW_REQUIRE_PASSWORD_CHANGE: No password provided")
 
         if status == "CHANGE_PASSWORD":
-            # Timeout protection for change password (max 180s)
-            start_time = time.time()
-            TIMEOUT = 180
+            # handle one input for new password
             print("   [Step 2] Handling Change Password...")
-            if ig_password:
+            if ig_password :
                 new_pass = ig_password + "@"
                 try:
-                    self._handle_require_password_change(new_pass)
+                    self._handle_change_password(new_pass)
                 except Exception as e:
-                    print(f"   [Step 2] Error in _handle_require_password_change for CHANGE_PASSWORD: {e}")
+                    print(f"   [Step 2] Error in _handle_change_password: {e}")
                     # If error, try to recover by refreshing
                     self.driver.get("https://www.instagram.com/")
                     wait_dom_ready(self.driver, timeout=20)
                     time.sleep(2)
-                    raise e  # Re-raise to stop flow
-                if time.time() - start_time > TIMEOUT:
-                    raise Exception("TIMEOUT_CHANGE_PASSWORD: End")
+                    raise e
                 # Cập nhật lại password mới lên GUI NGAY LẬP TỨC trước khi gọi các bước tiếp theo
                 if hasattr(self, "on_password_changed") and callable(self.on_password_changed):
                     self.on_password_changed(ig_username, new_pass)
-                time.sleep(4)
-                wait_dom_ready(self.driver, timeout=20)
                 
-                # Đảm bảo các bước sau luôn dùng mật khẩu mới
-                ig_password = new_pass
+                wait_dom_ready(self.driver, timeout=20)
+                time.sleep(4)
                 new_status = self._check_verification_result()
-                print(f"   [Step 2] Status after Password Change: {new_status}")
+                print(f"   [Step 2] Status after Change Password: {new_status}")
                 # Anti-hang: If status unchanged, refresh to avoid loop
                 if new_status == status:
                     self.driver.get("https://www.instagram.com/")
+
                 return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
             else:
                 raise Exception("STOP_FLOW_CHANGE_PASSWORD: No password provided")
+            
     
 
         # XỬ LÝ BIRTHDAY
         if status == "BIRTHDAY_SCREEN":
             wait_dom_ready(self.driver, timeout=20)
-            time.sleep(2)
             if self._handle_birthday_screen():
                 # get new status after handling birthday
                 wait_dom_ready(self.driver, timeout=20)
+                time.sleep(3)
                 new_status = self._check_verification_result()
                 print(f"   [Step 2] Status after Birthday: {new_status}")
                 # Anti-hang: If status unchanged, refresh to avoid loop
@@ -368,7 +387,7 @@ class InstagramExceptionStep:
                     print(f"   [Step 2] Status unchanged after handling {status}, refreshing to avoid hang...")
                     self.driver.refresh()
                     wait_dom_ready(self.driver, timeout=20)
-                    time.sleep(5)
+                    time.sleep(4)
                     new_status = self._check_verification_result()
                 # de quy kiem tra lai trang thai
                 return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
@@ -836,15 +855,29 @@ class InstagramExceptionStep:
                 else:
                     raise Exception("STOP_FLOW_CHECK_MAIL: No code found in mail")
             print(f"   [Step 2] Inputting code {code}...")
-            input_code_func(code)
-            print("   [Step 2] Waiting for UI to update after code input...")
-            wait_and_click(self.driver, By.CSS_SELECTOR, "button[type='submit']", timeout=20)
-            # Tăng thời gian chờ sau khi nhấn submit để tránh check mail quá sớm khi UI còn đang xử lý
-            wait_dom_ready(self.driver, timeout=120)
-            time.sleep(4) 
-            print("   [Step 2] Verifying code...")
-            check_result = self._check_verification_result()
-            print(f"   [Step 2] Result: {check_result}")
+            try:
+                input_code_func(code)
+                if not self._is_driver_alive():
+                    raise Exception("Browser closed during input")
+                print("   [Step 2] Waiting for UI to update after code input...")
+                wait_and_click(self.driver, By.CSS_SELECTOR, "button[type='submit']", timeout=20)
+                # Tăng thời gian chờ sau khi nhấn submit để tránh check mail quá sớm khi UI còn đang xử lý
+                wait_dom_ready(self.driver, timeout=120)
+                time.sleep(2)  # Reduced sleep to 2s
+                print("   [Step 2] Verifying code...")
+                check_result = self._check_verification_result()
+                print(f"   [Step 2] Result: {check_result}")
+            except Exception as e:
+                if "closed" in str(e).lower() or "crash" in str(e).lower() or "stale" in str(e).lower():
+                    raise Exception("STOP_FLOW_CRASH: Browser closed during code verification")
+                else:
+                    print(f"   [Step 2] Error during code input/verification: {e}")
+                    if attempt < max_retries:
+                        print("   [Step 2] Retrying due to error...")
+                        time.sleep(1)
+                        continue
+                    else:
+                        raise
             if check_result in ["CHECKPOINT_MAIL", "WRONG_CODE"]:
                 if attempt < max_retries:
                     print("   [Step 2] Code rejected or wrong, will retry if attempts remain...")
@@ -865,20 +898,10 @@ class InstagramExceptionStep:
                 "input[name='password'], input[name='new_password'], input[type='password']", timeout=20)
             
             if not first_input:
-                print("   [Step 2] Error: Could not find any Password input.")
-                return # Hoặc raise Exception tùy logic luồng cha
-
-            # 2. Tìm TẤT CẢ các ô input password đang hiển thị (Handle cả trường hợp 1 ô và 2 ô confirm)
-            # Selector bao quát để bắt được cả 'new_password' và 'confirm_password'
-            potential_inputs = self.driver.execute_script("return Array.from(document.querySelectorAll('input[type=\"password\"], input[name*=\"pass\"]'));")
+                raise Exception("No password input fields found")
             
-            # Lọc chỉ lấy các ô đang hiển thị (tránh điền vào ô ẩn)
-            visible_inputs = [inp for inp in potential_inputs if inp.is_displayed()]
-            
-            if not visible_inputs:
-                raise Exception("Found inputs but none are visible.")
-
-            print(f"   [Step 2] Found {len(visible_inputs)} password input field(s). Filling them...")
+            visible_inputs = []
+            visible_inputs.append(first_input)
 
             # 3. Điền pass vào các ô tìm thấy (Logic: Điền tối đa 2 ô đầu tiên tìm thấy - thường là New & Confirm)
             filled_count = 0
@@ -905,7 +928,7 @@ class InstagramExceptionStep:
                 btns = self.driver.execute_script("return Array.from(document.querySelectorAll('button'));")
                 for b in btns:
                     try:
-                        if b.is_displayed() and any(k in b.text.lower() for k in ["change", "submit", "continue", "save", "update"]):
+                        if b.is_displayed() and any(k in b.text.lower() for k in ["change", "submit", "continue", "save", "update", "confirm", "xác nhận"]):
                             b.click()
                             submit_clicked = True
                             break
@@ -940,8 +963,8 @@ class InstagramExceptionStep:
         max_consecutive_failures = 10  # If JS fails 10 times in a row, consider timeout
         while time.time() < end_time:
             try:
-                # Fast JS checks to avoid slow text extraction and potential hangs
-                if self.driver.execute_script("return /the 6-digit code| mã 6 chữ số/.test(document.body.innerText.toLowerCase())"):
+                #  Check your email or This email will replace all existing contact and login info on your account
+                if self.driver.execute_script("return /check your email|this email will replace all existing contact and login info on your account/.test(document.body.innerText.toLowerCase())"):
                     return "CHECKPOINT_MAIL"
                 
                 if self.driver.execute_script("return /change password|new password|create a strong password|change your password to secure your account/.test(document.body.innerText.toLowerCase())"):
@@ -965,6 +988,10 @@ class InstagramExceptionStep:
                 if self.driver.execute_script("return /sorry, there was a problem|please try again/.test(document.body.innerText.toLowerCase())"):
                     return "RETRY_UNUSUAL_LOGIN"
                 
+                # Check for wrong code
+                if self.driver.execute_script("return /code isn't right| mã không đúng|incorrect|wrong code|invalid|the code you entered/.test(document.body.innerText.toLowerCase())"):
+                    return "WRONG_CODE"
+                
                 if self.driver.execute_script("return /create a password at least 6 characters long|password must be at least 6 characters/.test(document.body.innerText.toLowerCase())"):
                     return "REQUIRE_PASSWORD_CHANGE"
                 
@@ -973,9 +1000,9 @@ class InstagramExceptionStep:
                     return "REAL_BIRTHDAY_REQUIRED"
                 
                 # URL checks
-                current_url = self.driver.current_url
-                if "instagram.com/" in current_url and "challenge" not in current_url:
-                    return "SUCCESS"
+                # current_url = self.driver.current_url
+                # if "instagram.com/" in current_url and "challenge" not in current_url:
+                #     return "SUCCESS"
                 
                 # Element-based checks for logged in state
                 if self.driver.execute_script("return /posts|followers|search|home/.test(document.body.innerText.toLowerCase())"):
@@ -993,7 +1020,7 @@ class InstagramExceptionStep:
                     return "RETRY_UNUSUAL_LOGIN"
                 
                 # Want to subscribe or continue
-                if self.driver.execute_script("return /subscribe|continue/.test(document.body.innerText.toLowerCase())"):
+                if self.driver.execute_script("return /subscribe/.test(document.body.innerText.toLowerCase())"):
                     return "SUBSCRIBE_OR_CONTINUE"
                 
                 consecutive_failures = 0  # Reset on successful check
