@@ -179,12 +179,14 @@ class InstagramLoginStep:
             try:
                 body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
             except Exception as e:
-                if "stale" in str(e).lower():
+                error_str = str(e).lower()
+                if "stale" in error_str or "element" in error_str and "reference" in error_str:
                     print("   [Step 1] Stale element when getting body text, retrying...")
                     time.sleep(1)
                     try:
                         body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
                     except Exception as e2:
+                        print("   [Step 1] Stale element retry also failed, returning unknown state")
                         return "LOGGED_IN_UNKNOWN_STATE"
                 else:
                     return f"ERROR_DETECT: {str(e)}"
@@ -227,7 +229,16 @@ class InstagramLoginStep:
                 start_time = time.time()
                 last_url = self.driver.current_url
                 while True:
-                    body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                    try:
+                        body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        if "stale" in error_str or ("element" in error_str and "reference" in error_str):
+                            print("   [Step 1] Stale element in status check loop, retrying...")
+                            time.sleep(1)
+                            continue
+                        else:
+                            raise e  # Re-raise to be caught by outer except
                     current_url = self.driver.current_url
 
                     # you need to request help logging in To secure your account, you need to request help logging in

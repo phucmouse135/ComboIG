@@ -24,6 +24,27 @@ class InstagramExceptionStep:
         # Instance of step1 login
         self.step1_login = step1_login(self.driver)
 
+    def _take_exception_screenshot(self, exception_type, additional_info=""):
+        """Take a screenshot when an exception occurs for debugging purposes."""
+        try:
+            timestamp = int(time.time())
+            screenshot_dir = "screenshots"
+            os.makedirs(screenshot_dir, exist_ok=True)
+            
+            # Clean exception type for filename
+            clean_exception = str(exception_type).replace(":", "_").replace(" ", "_").replace("/", "_")[:50]
+            clean_info = str(additional_info).replace(":", "_").replace(" ", "_").replace("/", "_")[:30]
+            
+            filename = f"exception_{clean_exception}_{clean_info}_{timestamp}.png"
+            screenshot_path = os.path.join(screenshot_dir, filename)
+            
+            self.driver.save_screenshot(screenshot_path)
+            print(f"   [Exception Screenshot] Saved: {screenshot_path}")
+            return screenshot_path
+        except Exception as screenshot_e:
+            print(f"   [Exception Screenshot] Failed to save screenshot: {screenshot_e}")
+            return None
+
     def _safe_execute_script(self, script, default=None, retries=2):
         """Execute JS script with retry on timeout errors."""
         for attempt in range(retries + 1):
@@ -129,13 +150,20 @@ class InstagramExceptionStep:
 
     def _validate_masked_email_robust(self, primary_email, secondary_email=None):
         try:
-            # [RETRY] Thử lấy body text 2 lần phòng trường hợp chưa load xong
+            # [RETRY] Thử lấy body text 2 lần phòng trường hợp chưa load xong hoặc stale element
             body_text = ""
             for _ in range(2):  # Reduced from 3 to 2 attempts
                 try:
                     body_text = self.driver.find_element(By.TAG_NAME, "body").text
                     if "@" in body_text: break
-                except: time.sleep(0.5)  # Reduced from 1s
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if "stale" in error_str or ("element" in error_str and "reference" in error_str):
+                        print("   [2FA] Stale element when getting body text, retrying...")
+                        time.sleep(0.5)
+                        continue
+                    else:
+                        time.sleep(0.5)  # For other errors, still retry
             
             match = re.search(r'\b([a-zA-Z0-9][\w\*]*@[\w\*]+\.[a-zA-Z\.]+)\b', body_text)
             if not match: return True 
@@ -161,7 +189,11 @@ class InstagramExceptionStep:
                 print("   [Step 2] [Manual Detect] Stuck on profile selection page!")
                 return True
         except Exception as e:
-            print(f"   [Step 2] [Manual Detect] Error checking stuck profile selection: {e}")
+            error_str = str(e).lower()
+            if "stale" in error_str or ("element" in error_str and "reference" in error_str):
+                print("   [Step 2] [Manual Detect] Stale element when checking profile selection, assuming not stuck")
+            else:
+                print(f"   [Step 2] [Manual Detect] Error checking stuck profile selection: {e}")
         return False
 
     # ==========================================
@@ -260,9 +292,11 @@ class InstagramExceptionStep:
     def handle_status(self, status, ig_username, gmx_user, gmx_pass, linked_mail=None, ig_password=None, depth=0):
         # Chống đệ quy vô tận (giới hạn 20 bước nhảy trạng thái)
         if depth > 20:
+             self._take_exception_screenshot("STOP_FLOW_LOOP", f"Max recursion depth reached")
              raise Exception("STOP_FLOW_LOOP: Max recursion depth reached")
         print(f"   [Step 2] Processing status: {status}")
         if not self._is_driver_alive():
+            self._take_exception_screenshot("STOP_FLOW_CRASH", "Browser Closed")
             raise Exception("STOP_FLOW_CRASH: Browser Closed")
 
         success_statuses = [
@@ -509,8 +543,10 @@ class InstagramExceptionStep:
                     self.driver.get("https://www.instagram.com/")
                     wait_dom_ready(self.driver, timeout=20)
                     time.sleep(2)
+                    self._take_exception_screenshot("REQUIRE_PASSWORD_CHANGE_ERROR", str(e))
                     raise e  # Re-raise to stop flow
                 if time.time() - start_time > TIMEOUT:
+                    self._take_exception_screenshot("TIMEOUT_REQUIRE_PASSWORD_CHANGE", "End")
                     raise Exception("TIMEOUT_REQUIRE_PASSWORD_CHANGE: End")
                 # Cập nhật lại password mới lên GUI NGAY LẬP TỨC trước khi gọi các bước tiếp theo
                 if hasattr(self, "on_password_changed") and callable(self.on_password_changed):
@@ -538,6 +574,7 @@ class InstagramExceptionStep:
                     self.driver.get("https://www.instagram.com/")
                     wait_dom_ready(self.driver, timeout=20)
                     time.sleep(2)
+                    self._take_exception_screenshot("CHANGE_PASSWORD_ERROR", str(e))
                     raise e
                 # Cập nhật lại password mới lên GUI NGAY LẬP TỨC trước khi gọi các bước tiếp theo
                 if hasattr(self, "on_password_changed") and callable(self.on_password_changed):
@@ -545,14 +582,12 @@ class InstagramExceptionStep:
                 
                 wait_dom_ready(self.driver, timeout=20)
                 time.sleep(4)
-                new_status = self._check_verification_result()
-                print(f"   [Step 2] Status after Change Password: {new_status}")
-                # Anti-hang: If status unchanged, refresh to avoid loop
-                if new_status == status:
-                    self.driver.get("https://www.instagram.com/")
-
-                return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+                
+                # Sau khi đổi password thành công, cần restart toàn bộ quá trình login với mật khẩu mới
+                print(f"   [Step 2] Password changed successfully. Returning RESTART_LOGIN to restart process with new password.")
+                return "RESTART_LOGIN"
             else:
+                self._take_exception_screenshot("STOP_FLOW_CHANGE_PASSWORD", "No password provided")
                 raise Exception("STOP_FLOW_CHANGE_PASSWORD: No password provided")
             
     
@@ -653,6 +688,7 @@ class InstagramExceptionStep:
         ]
 
         if status in fail_statuses:
+            self._take_exception_screenshot("STOP_FLOW_EXCEPTION", status)
             raise Exception(f"STOP_FLOW_EXCEPTION: {status}")
         
         if status == "BIRTHDAY_SCREEN":
@@ -682,12 +718,7 @@ class InstagramExceptionStep:
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
 
         # Capture screenshot for unknown status
-        timestamp = int(time.time())
-        screenshot_dir = "screenshots"
-        os.makedirs(screenshot_dir, exist_ok=True)
-        screenshot_path = os.path.join(screenshot_dir, f"unknown_status_{status}_{timestamp}.png")
-        self.driver.save_screenshot(screenshot_path)
-        print(f"   [Step 2] Screenshot saved for unknown status '{status}': {screenshot_path}")
+        self._take_exception_screenshot("STOP_FLOW_UNKNOWN_STATUS", status)
 
         raise Exception(f"STOP_FLOW_UNKNOWN_STATUS: {status}")
 
@@ -724,6 +755,7 @@ class InstagramExceptionStep:
                 except Exception as e:
                     print(f"   [Step 2] Warning checking for real birthday text: {e}")
                 if time.time() - start_time > TIMEOUT:
+                    self._take_exception_screenshot("TIMEOUT_BIRTHDAY_SCREEN", "Main loop")
                     raise Exception("TIMEOUT_BIRTHDAY_SCREEN: Main loop")
                 print(f"   [Step 2] Birthday Attempt {attempt+1}/3...")
                 
@@ -742,6 +774,7 @@ class InstagramExceptionStep:
                         if els and els[0].is_displayed():
                             year_select_el = els[0]; break
                         if time.time() - start_time > TIMEOUT:
+                            self._take_exception_screenshot("TIMEOUT_BIRTHDAY_SCREEN", "Year select find")
                             raise Exception("TIMEOUT_BIRTHDAY_SCREEN: Year select find")
                     
                     if year_select_el:
@@ -773,6 +806,7 @@ class InstagramExceptionStep:
                             else:
                                 print(f"   [Step 2] Year mismatch ({current_val} vs {target_year}). Retrying...")
                             if time.time() - start_time > TIMEOUT:
+                                self._take_exception_screenshot("TIMEOUT_BIRTHDAY_SCREEN", "Year select loop")
                                 raise Exception("TIMEOUT_BIRTHDAY_SCREEN: Year select loop")
                         
                         if year_confirmed:
@@ -881,6 +915,7 @@ class InstagramExceptionStep:
 
             WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
             if time.time() - start_time > TIMEOUT:
+                self._take_exception_screenshot("TIMEOUT_BIRTHDAY_SCREEN", "End")
                 raise Exception("TIMEOUT_BIRTHDAY_SCREEN: End")
             return "LOGGED_IN_SUCCESS"
 
@@ -934,12 +969,14 @@ class InstagramExceptionStep:
                         time.sleep(2)  # Reduced from 2s
                         break
                         if time.time() - start_time > TIMEOUT:
+                            self._take_exception_screenshot("TIMEOUT_EMAIL_CHECKPOINT", "Radio/Send button")
                             raise Exception("TIMEOUT_EMAIL_CHECKPOINT: Radio/Send button")
         except Exception as e:
             print(f"   [Step 2] Warning handling radio buttons: {e}")
         
         # --- GIAI ĐOẠN 1: VERIFY HINT ---
         if not self._validate_masked_email_robust(gmx_user, linked_mail):
+             self._take_exception_screenshot("STOP_FLOW_CHECKPOINT", "Email hint mismatch")
              raise Exception("STOP_FLOW_CHECKPOINT: Email hint mismatch")
 
         # Sử dụng _check_mail_flow để đồng bộ logic chống lặp vô hạn
