@@ -72,6 +72,20 @@ class InstagramExceptionStep:
             print(f"   [CRITICAL] Hint {masked} mismatch with {primary_email} / {secondary_email}")
             return False
         except: return True
+        
+    def _detect_stuck_on_profile_selection(self):
+        """
+        Thủ công kiểm tra nếu trang hiện tại có text 'use another profile' hoặc 'log into instagram',
+        hoặc các dấu hiệu stuck ở trang chọn profile, trả về True để tự động reload và login lại.
+        """
+        try:
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+            if ("use another profile" in body_text or "log into instagram" in body_text or "switch accounts" in body_text):
+                print("   [Step 2] [Manual Detect] Stuck on profile selection page!")
+                return True
+        except Exception as e:
+            print(f"   [Step 2] [Manual Detect] Error checking stuck profile selection: {e}")
+        return False
 
     # ==========================================
     # 2. MAIN ROUTING (HANDLE STATUS)
@@ -460,6 +474,25 @@ class InstagramExceptionStep:
             print("   [Step 2] Wrong code detected. Retrying checkpoint...")
             return self.handle_status("CHECKPOINT_MAIL", ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
         
+
+
+        # Handle reload and login again if redirected to profile selection or use another profile
+        if status == "RETRY_UNUSUAL_LOGIN" or self._detect_stuck_on_profile_selection():
+            print("   [Step 2] Detected need to reload and login again (profile selection or use another profile, or stuck)...")
+            self.driver.get("https://www.instagram.com/")
+            wait_dom_ready(self.driver, timeout=20)
+            time.sleep(2)
+            if ig_username and ig_password:
+                print("   [Step 2] Calling step1 to login again with new password...")
+                isLogin = step1_login.perform_login(self, ig_username, ig_password)
+                wait_dom_ready(self.driver, timeout=20)
+                if isLogin == "LOGGED_IN_SUCCESS":
+                    return self.handle_status("LOGGED_IN_SUCCESS", ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+                else:
+                    return self.handle_status(isLogin, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+            else:
+                raise Exception("STOP_FLOW_RETRY_UNUSUAL_LOGIN: Missing username or password")
+
         fail_statuses = [
             "UNUSUAL_LOGIN", "TRY_ANOTHER_DEVICE", "2FA_REQUIRED", "SUSPENDED",
             "LOGIN_FAILED_INCORRECT", "2FA_SMS", "2FA_WHATSAPP", "GET_HELP_LOG_IN",
