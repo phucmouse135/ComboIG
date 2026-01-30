@@ -16,7 +16,17 @@ def _get_chromedriver_path():
         return _CHROMEDRIVER_PATH
     with _CHROMEDRIVER_LOCK:
         if not _CHROMEDRIVER_PATH:
-            _CHROMEDRIVER_PATH = ChromeDriverManager().install()
+            try:
+                # Try latest compatible version first
+                _CHROMEDRIVER_PATH = ChromeDriverManager().install()
+            except Exception as e:
+                print(f"Failed to get latest ChromeDriver: {e}")
+                # Fallback to a known stable version
+                try:
+                    _CHROMEDRIVER_PATH = ChromeDriverManager(version="131.0.5772.102").install()
+                except Exception as e2:
+                    print(f"Fallback ChromeDriver also failed: {e2}")
+                    raise e
     return _CHROMEDRIVER_PATH
 
 def ensure_chromedriver():
@@ -37,16 +47,9 @@ def get_driver(headless=True , window_rect=None):
     
     #   --- PERFORMANCE OPTIMIZATION FLAGS ---
     options.add_argument("--disable-notifications")
-    options.add_argument("--start-maximized")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu") 
-    
-    # Prevent renderer timeout issues
-    options.add_argument("--disable-background-timer-throttling")
-    options.add_argument("--disable-renderer-backgrounding")
-    options.add_argument("--disable-backgrounding-occluded-windows")
-    options.add_argument("--disable-features=VizDisplayCompositor")
+    options.add_argument("--disable-gpu")
     options.add_argument("--disable-web-security")
     options.add_argument("--allow-running-insecure-content")
     options.add_argument("--no-first-run")
@@ -59,26 +62,33 @@ def get_driver(headless=True , window_rect=None):
     options.add_argument("--no-crash-upload")
     options.add_argument("--disable-logging")
     options.add_argument("--disable-dev-tools")
-    options.add_argument("--disable-extensions-except")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-component-extensions-with-background-pages")
-    
-    # Block images (Speed boost)
-    options.add_argument("--blink-settings=imagesEnabled=false") 
-    
-    # Disable extensions & bars
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
     
-    # Disk I/O Optimizations
+    # Block images for speed
+    options.add_argument("--blink-settings=imagesEnabled=false")
+    
+    # Disk optimizations
     options.add_argument("--disable-application-cache")
-    options.add_argument("--disk-cache-size=0") 
-    options.add_argument("--disable-logging") 
+    options.add_argument("--disk-cache-size=0")
     options.add_argument("--log-level=3")
+    
+    # Prevent renderer timeout
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-hang-monitor")
+    options.add_argument("--disable-ipc-flooding-protection")
+    
+    # Memory and stability options
+    options.add_argument("--max_old_space_size=4096")
+    options.add_argument("--memory-pressure-off")
+    options.add_argument("--disable-low-end-device-mode")
     
     options.page_load_strategy = 'eager'
     
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+    # Updated user agent for Chrome 130+
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
     
     try:
         service = Service(_get_chromedriver_path())
@@ -88,7 +98,12 @@ def get_driver(headless=True , window_rect=None):
         driver.set_script_timeout(120)
         return driver
     except Exception as e:
-        print(f"Error creating driver: {e}")
+        error_msg = str(e)
+        if "ected token" in error_msg or "stacktrace" in error_msg.lower():
+            print("Chrome compatibility error detected. This might be due to Chrome version mismatch.")
+            print("Try updating Chrome to a stable version or check ChromeDriver compatibility.")
+            print(f"Current Chrome version: 144.0.7559.110")
+        print(f"Error creating Chrome driver: {error_msg}")
         raise e
 
 def parse_cookie_string(cookie_str):

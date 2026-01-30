@@ -295,8 +295,14 @@ class AutomationGUI:
             elapsed = end_time - start_time
             note_time = f"Failed in {elapsed:.1f}s"
             msg = str(e).replace("STOP_FLOW_", "")
-            self.msg_queue.put(("UPDATE_2FA", (item_id, msg)))
-            self.msg_queue.put(("FAIL_CRITICAL", (item_id, msg, note_time)))
+            # Check if step3 was successful (has crawl data) to determine if it's 2FA fail or general fail
+            values = self.tree.item(item_id)['values']
+            has_crawl_data = values[8] and str(values[8]).strip() and values[8] != '0'  # Post count as indicator
+            if has_crawl_data:
+                self.msg_queue.put(("UPDATE_2FA", (item_id, msg)))
+                self.msg_queue.put(("FAIL_2FA", (item_id, msg, note_time)))
+            else:
+                self.msg_queue.put(("FAIL_CRITICAL", (item_id, msg, note_time)))
         finally:
             print(f"[TIME] Case {acc['username']} finished in {elapsed:.2f} seconds.")
             if driver: 
@@ -411,6 +417,11 @@ class AutomationGUI:
                         11: info['cookie']
                     })
                 
+                elif msg_type == "UPDATE_2FA":
+                    item_id, err = data
+                    # Cập nhật lỗi 2FA nhưng giữ lại dữ liệu crawl từ step3
+                    self.update_tree_item(item_id, {12: f"2FA Setup Failed: {err[:60]}"})
+                
                 elif msg_type == "SUCCESS":
                     item_id, key, note_time = data
                     self.success_count += 1
@@ -418,7 +429,7 @@ class AutomationGUI:
                     # Cập nhật Key 2FA(4), Note(12)
                     self.update_tree_item(item_id, {4: key, 12: f"Success | {note_time}"}, "success")
                     self.update_stats_label()
-                    self.write_result_to_output(item_id, success=True)
+                    self.write_result_to_output(item_id, result_type="success")
                 
                 elif msg_type == "FAIL_CRITICAL":
                     item_id, err, note_time = data
@@ -426,7 +437,15 @@ class AutomationGUI:
                     self.processed_count += 1
                     self.update_tree_item(item_id, {8: err[:60], 12: f"Failed | {note_time}"}, "error") 
                     self.update_stats_label()
-                    self.write_result_to_output(item_id, success=False)
+                    self.write_result_to_output(item_id, result_type="fail")
+                
+                elif msg_type == "FAIL_2FA":
+                    item_id, err, note_time = data
+                    self.fail_count += 1
+                    self.processed_count += 1
+                    self.update_tree_item(item_id, {8: err[:60], 12: f"2FA Failed | {note_time}"}, "error") 
+                    self.update_stats_label()
+                    self.write_result_to_output(item_id, result_type="2fa")
                 
                 elif msg_type == "ALL_DONE":
                     self.is_running = False
@@ -438,13 +457,26 @@ class AutomationGUI:
         except queue.Empty: pass
         self.root.after(100, self.process_queue)
 
-    def write_result_to_output(self, item_id, success=True):
+    def write_result_to_output(self, item_id, result_type="fail"):
+        """Write result to appropriate log file based on result type.
+        
+        Args:
+            item_id: Tree item ID
+            result_type: "success", "2fa", or "fail"
+        """
         try:
             values = self.tree.item(item_id)['values']
-            with open("output.txt", "a", encoding="utf-8") as f:
+            filename = {
+                "success": "success.txt",
+                "2fa": "2fa.txt", 
+                "fail": "fail.txt"
+            }.get(result_type, "fail.txt")
+            
+            with open(filename, "a", encoding="utf-8") as f:
                 row = [str(v) for v in values]
                 f.write("\t".join(row) + "\n")
-        except: pass
+        except Exception as e:
+            print(f"Error writing to {filename}: {e}")
 
     def update_tree_item(self, id, col_map, tag=None):
         try:

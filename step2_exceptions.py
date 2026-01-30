@@ -242,42 +242,102 @@ class InstagramExceptionStep:
                     print("   [Step 2] Could not find confirm password input, using same input for both")
                     confirm_pass_input = new_pass_input  # Fallback: dùng cùng ô nếu không tìm thấy
             
-            # Nhập password vào cả 2 ô với delay để chính xác
-            self._fill_input_with_delay(new_pass_input, new_password)
-            if confirm_pass_input != new_pass_input:  # Chỉ nhập nếu khác ô
-                self._fill_input_with_delay(confirm_pass_input, new_password)
+            # Nhập password vào cả 2 ô với delay để tránh stale element
+            try:
+                new_pass_input.clear()
+                new_pass_input.send_keys(new_password)
+                print(f"   [Step 2] Entered new password in first field")
+                time.sleep(1)  # Delay to avoid triggering validation too quickly
+                
+                if confirm_pass_input != new_pass_input:  # Chỉ nhập nếu khác ô
+                    confirm_pass_input.clear()
+                    confirm_pass_input.send_keys(new_password)
+                    print(f"   [Step 2] Entered confirm password in second field")
+                    time.sleep(1)
+            except Exception as e:
+                error_str = str(e).lower()
+                if "stale" in error_str:
+                    print(f"   [Step 2] Stale element during password input: {e}. Retrying...")
+                    # Re-find elements and retry
+                    time.sleep(2)
+                    new_pass_input = wait_element(self.driver, By.ID, "new_password1", timeout=10) or \
+                                   wait_element(self.driver, By.CSS_SELECTOR, "input[type='password']", timeout=10)
+                    if new_pass_input:
+                        new_pass_input.clear()
+                        new_pass_input.send_keys(new_password)
+                        print(f"   [Step 2] Re-entered new password after stale element recovery")
+                    else:
+                        raise Exception(f"Could not recover from stale element during password input: {e}")
+                else:
+                    raise e
 
-            # Nhấn nút Next (retry nhiều selector)
+            # Wait a bit for any client-side validation or page changes
+            time.sleep(2)
+            
+            # Nhấn nút Next với retry và stale element handling
             next_clicked = False
             next_selectors = [
                 (By.XPATH, "//button[contains(text(), 'Next')]") ,
                 (By.CSS_SELECTOR, "div[role='button'][tabindex='0']"),
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//button[contains(@class, 'x1i10hfl')]"),
                 (By.CSS_SELECTOR, "div.x1i10hfl.xjqpnuy.xc5r6h4.xqeqjp1.x1phubyo.x972fbf.x10w94by.x1qhh985.x14e42zd.xdl72j9.x2lah0s.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.x2lwn1j.xeuugli.xexx8yu.x18d9i69.x1hl2dhg.xggy1nq.x1ja2u2z.x1t137rt.x1q0g3np.x1lku1pv.x1a2a7pz.x6s0dn4.xjyslct.x1obq294.x5a5i1n.xde0f50.x15x8krk.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x9f619.x9bdzbf.x1ypdohk.x1f6kntn.xwhw2v2.x10w6t97.xl56j7k.x17ydfre.xf7dkkf.xv54qhq.x1n2onr6.x2b8uid.xlyipyv.x87ps6o.x5c86q.x18br7mf.x1i0vuye.xh8yej3.x18cabeq.x158me93.xk4oym4.x1uugd1q.x3nfvp2")
             ]
-            for by, sel in next_selectors:
-                try:
-                    next_btns = self.driver.find_elements(by, sel)
-                    for btn in next_btns:
-                        if btn.is_displayed():
-                            btn.click()
-                            print(f"   [Step 2] Clicked Next after password change via selector: {sel}")
-                            next_clicked = True
+            
+            for attempt in range(3):  # Retry up to 3 times for stale elements
+                for by, sel in next_selectors:
+                    try:
+                        next_btns = self.driver.find_elements(by, sel)
+                        for btn in next_btns:
+                            if btn.is_displayed() and btn.is_enabled():
+                                # Try regular click first
+                                try:
+                                    btn.click()
+                                    print(f"   [Step 2] Clicked Next after password change via selector: {sel}")
+                                    next_clicked = True
+                                    break
+                                except Exception as click_e:
+                                    # Try JS click as fallback
+                                    try:
+                                        self.driver.execute_script("arguments[0].click();", btn)
+                                        print(f"   [Step 2] Clicked Next via JS fallback: {sel}")
+                                        next_clicked = True
+                                        break
+                                    except Exception as js_e:
+                                        print(f"   [Step 2] JS click failed: {js_e}")
+                                        continue
+                        if next_clicked:
                             break
-                    if next_clicked:
-                        break
-                except Exception as e:
-                    print(f"   [Step 2] Error finding Next button via selector: {sel} - {e}")
-                if time.time() - start_time > TIMEOUT:
-                    raise Exception("TIMEOUT_REQUIRE_PASSWORD_CHANGE: Next button find")
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        if "stale" in error_str:
+                            print(f"   [Step 2] Stale element when finding Next button (attempt {attempt+1}), waiting and retrying...")
+                            time.sleep(2)
+                            continue
+                        else:
+                            print(f"   [Step 2] Error finding Next button via selector: {sel} - {e}")
+                            continue
+                    if time.time() - start_time > TIMEOUT:
+                        raise Exception("TIMEOUT_REQUIRE_PASSWORD_CHANGE: Next button find")
+                if next_clicked:
+                    break
+                if attempt < 2:  # Don't wait after last attempt
+                    time.sleep(2)
+                    
             if not next_clicked:
                 print("   [Step 2] Could not find Next button after password change (all selectors tried).")
+                self._take_exception_screenshot("NEXT_BUTTON_NOT_FOUND", "After password change")
+                raise Exception("Could not find Next button after password change")
+                
             if time.time() - start_time > TIMEOUT:
                 raise Exception("TIMEOUT_REQUIRE_PASSWORD_CHANGE: End")
             
-            # Sau khi nhấn Next, chờ 2 giây và kiểm tra crash
-            WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            # Sau khi nhấn Next, chờ page load hoàn toàn
+            WebDriverWait(self.driver, 15).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            time.sleep(3)  # Extra wait for any redirects
+            
             try:
-                # Kiểm tra driver còn sống
+                # Kiểm tra driver còn sống và page đã load
                 current_url = self.driver.current_url
                 print(f"   [Step 2] Post-Next URL: {current_url}")
                 WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
@@ -289,6 +349,8 @@ class InstagramExceptionStep:
                 return  # Hoặc raise tùy logic
         except Exception as e:
             print(f"   [Step 2] Error handling require password change: {e}")
+            self._take_exception_screenshot("REQUIRE_PASSWORD_CHANGE_ERROR", str(e))
+            raise e
     def handle_status(self, status, ig_username, gmx_user, gmx_pass, linked_mail=None, ig_password=None, depth=0):
         # Chống đệ quy vô tận (giới hạn 20 bước nhảy trạng thái)
         if depth > 20:
@@ -554,10 +616,15 @@ class InstagramExceptionStep:
                 time.sleep(4)
                 wait_dom_ready(self.driver, timeout=20)
                 
-                
-                # Sau khi đổi password thành công, cần restart toàn bộ quá trình login với mật khẩu mới
-                print(f"   [Step 2] Password changed successfully. Returning RESTART_LOGIN to restart process with new password.")
-                return "RESTART_LOGIN"
+                # Check if we're actually logged in after password change
+                current_status = self._check_verification_result()
+                if current_status in ["LOGGED_IN_SUCCESS", "COOKIE_CONSENT", "TERMS_AGREEMENT"]:
+                    print(f"   [Step 2] Password changed and login successful. Status: {current_status}")
+                    return current_status
+                else:
+                    # If not logged in, restart the login process
+                    print(f"   [Step 2] Password changed but not logged in. Status: {current_status}. Returning RESTART_LOGIN to restart process with new password.")
+                    return "RESTART_LOGIN"
             else:
                 raise Exception("STOP_FLOW_REQUIRE_PASSWORD_CHANGE: No password provided")
 
@@ -567,9 +634,9 @@ class InstagramExceptionStep:
             if ig_password :
                 new_pass = ig_password + "@"
                 try:
-                    self._handle_change_password(new_pass)
+                    self._handle_require_password_change(new_pass)  # Use the same method as REQUIRE_PASSWORD_CHANGE
                 except Exception as e:
-                    print(f"   [Step 2] Error in _handle_change_password: {e}")
+                    print(f"   [Step 2] Error in _handle_require_password_change: {e}")
                     # If error, try to recover by refreshing
                     self.driver.get("https://www.instagram.com/")
                     wait_dom_ready(self.driver, timeout=20)
@@ -583,9 +650,15 @@ class InstagramExceptionStep:
                 wait_dom_ready(self.driver, timeout=20)
                 time.sleep(4)
                 
-                # Sau khi đổi password thành công, cần restart toàn bộ quá trình login với mật khẩu mới
-                print(f"   [Step 2] Password changed successfully. Returning RESTART_LOGIN to restart process with new password.")
-                return "RESTART_LOGIN"
+                # Check if we're actually logged in after password change
+                current_status = self._check_verification_result()
+                if current_status in ["LOGGED_IN_SUCCESS", "COOKIE_CONSENT", "TERMS_AGREEMENT"]:
+                    print(f"   [Step 2] Password changed and login successful. Status: {current_status}")
+                    return current_status
+                else:
+                    # If not logged in, restart the login process
+                    print(f"   [Step 2] Password changed but not logged in. Status: {current_status}. Returning RESTART_LOGIN to restart process with new password.")
+                    return "RESTART_LOGIN"
             else:
                 self._take_exception_screenshot("STOP_FLOW_CHANGE_PASSWORD", "No password provided")
                 raise Exception("STOP_FLOW_CHANGE_PASSWORD: No password provided")
