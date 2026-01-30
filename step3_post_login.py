@@ -199,34 +199,24 @@ class InstagramPostLoginStep:
         except: pass
 
     def _navigate_to_profile(self, username):
-        """Click vào biểu tượng Profile để vào trang cá nhân."""
+        """Truy cập thẳng URL profile để đảm bảo vào đúng trang."""
         print("   [Step 3] Navigating to Profile...")
         
-        profile_selectors = [
-            f"a[href='/{username}/']",          # Link trực tiếp
-            "img[alt$='profile picture']",      # Ảnh Avatar nhỏ
-            "svg[aria-label='Profile']",        # Icon Profile
-            "svg[aria-label='Trang cá nhân']"
-        ]
+        # Luôn truy cập thẳng URL để tránh lỗi click icon
+        self.driver.get(f"https://www.instagram.com/{username}/")
         
-        clicked = False
-        for sel in profile_selectors:
-            el = wait_element(self.driver, By.CSS_SELECTOR, sel, timeout=3)
-            if el:
-                try: 
-                    el.click()
-                    clicked = True
-                    break
-                except: pass
+        wait_dom_ready(self.driver, timeout=10)
         
-        # Nếu click thất bại, truy cập thẳng URL
-        if not clicked:
-            print("   [Step 3] Click failed. Forcing URL navigation...")
-            self.driver.get(f"https://www.instagram.com/{username}/")
+        # Chờ Username xuất hiện (Confirm đã vào đúng trang), retry nếu cần
+        for attempt in range(3):
+            if wait_element(self.driver, By.XPATH, f"//*[contains(text(), '{username}')]", timeout=5):
+                print("   [Step 3] Profile page confirmed.")
+                return
+            print(f"   [Step 3] Username not found, attempt {attempt+1}/3. Refreshing...")
+            self.driver.refresh()
+            wait_dom_ready(self.driver, timeout=5)
         
-        wait_dom_ready(self.driver)
-        # Chờ Username xuất hiện (Confirm đã vào đúng trang)
-        wait_element(self.driver, By.XPATH, f"//*[contains(text(), '{username}')]", timeout=5)
+        print("   [Step 3] Warning: Could not confirm profile page, proceeding anyway.")
 
     def _crawl_data(self, username):
         print(f"   [Step 3] Crawling data for {username}...")
@@ -337,9 +327,16 @@ class InstagramPostLoginStep:
         return final_data
 
     def _get_cookie_string(self):
-        """Lấy toàn bộ cookie hiện tại và gộp thành chuỗi."""
+        """Lấy toàn bộ cookie hiện tại và gộp thành chuỗi, với chuẩn hóa."""
         try:
             cookies = self.driver.get_cookies()
-            return "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+            # Chuẩn hóa: loại bỏ khoảng trắng và encode value
+            import urllib.parse
+            cookie_parts = []
+            for c in cookies:
+                name = c['name']
+                value = urllib.parse.quote(c['value'].strip())
+                cookie_parts.append(f"{name}={value}")
+            return "; ".join(cookie_parts)
         except:
             return ""

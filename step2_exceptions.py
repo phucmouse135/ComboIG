@@ -565,6 +565,10 @@ class InstagramExceptionStep:
                     }
                     return null;
                 """),
+                ("css", "div.x1i10hfl.xjqpnuy.xc5r6h4.xqeqjp1.x1phubyo.x972fbf.x10w94by.x1qhh985.x14e42zd.xdl72j9.x2lah0s.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.x2lwn1j.xeuugli.xexx8yu.x18d9i69.x1hl2dhg.xggy1nq.x1ja2u2z.x1t137rt.x1q0g3np.x1lku1pv.x1a2a7pz.x6s0dn4.xjyslct.x1obq294.x5a5i1n.xde0f50.x15x8krk.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x9f619.x1ypdohk.x1f6kntn.xwhw2v2.x10w6t97.xl56j7k.x17ydfre.xf7dkkf.xv54qhq.x1n2onr6.x2b8uid.xlyipyv.x87ps6o.x5c86q.x18br7mf.x1i0vuye.xh8yej3.x1aavi5t.x1h6iz8e.xixcex4.xk4oym4.xl3ioum.x3nfvp2"),
+                ("css", "div[role='button'][tabindex='0']"),
+                ("css", "div[role='button']"),
+                ("css", "div[tabindex='0']"),
                 ("xpath", "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'close')]"),
                 ("xpath", "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'cancel')]"),
                 ("xpath", "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'not now')]"),
@@ -955,6 +959,10 @@ class InstagramExceptionStep:
         # NHÓM FAIL
         if status == "WRONG_CODE":
             print("   [Step 2] Wrong code detected. Retrying checkpoint...")
+            return self.handle_status("CHECKPOINT_MAIL", ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+
+        if status == "CAN_GET_NEW_CODE":
+            print("   [Step 2] Can get new code detected. Retrying checkpoint...")
             return self.handle_status("CHECKPOINT_MAIL", ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
         
 
@@ -1487,9 +1495,9 @@ class InstagramExceptionStep:
                         continue
                     else:
                         raise
-            if check_result in ["CHECKPOINT_MAIL", "WRONG_CODE", "TIMEOUT"]:
+            if check_result in ["CHECKPOINT_MAIL", "WRONG_CODE", "CAN_GET_NEW_CODE", "TIMEOUT"]:
                 if attempt < max_retries:
-                    if check_result == "WRONG_CODE":
+                    if check_result in ["WRONG_CODE", "CAN_GET_NEW_CODE"]:
                         # Click "Get new code" link using JS for precision
                         try:
                             get_new_link = self.driver.execute_script("""

@@ -299,13 +299,9 @@ class AutomationGUI:
                 elapsed = end_time - start_time
                 note_time = f"Failed in {elapsed:.1f}s"
                 msg = str(e).replace("STOP_FLOW_", "")
-                if step4_started:
-                    # This is a step 4 (2FA) error
-                    self.msg_queue.put(("UPDATE_2FA", (item_id, msg)))
-                    self.msg_queue.put(("FAIL_2FA", (item_id, msg, note_time)))
-                else:
-                    # This is a step 1-3 error
-                    self.msg_queue.put(("FAIL_CRITICAL", (item_id, msg, note_time)))
+                # This is a step 4 (2FA) error
+                self.msg_queue.put(("UPDATE_2FA", (item_id, msg)))
+                self.msg_queue.put(("FAIL_2FA", (item_id, msg, note_time)))
                 return  # Exit the function after handling step 4 error
         except Exception as e:
             end_time = time.time()
