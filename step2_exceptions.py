@@ -157,6 +157,17 @@ class InstagramExceptionStep:
             new_status = self._check_verification_result()
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
         
+        # CONFIRM_TRUSTED_DEVICE
+        if status == "CONFIRM_TRUSTED_DEVICE":
+            print("   [Step 2] Handling Confirm Trusted Device...")
+            # Click "This Was Me" button
+            wait_and_click(self.driver, By.XPATH, "//button[contains(text(), 'This Was Me') or contains(text(), 'Đây là tôi')]", timeout=20)
+            WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            time.sleep(2)
+            new_status = self._check_verification_result()
+            return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+        
+        
         # SUBSCRIBE_OR_CONTINUE
         if status == "SUBSCRIBE_OR_CONTINUE":
             print("   [Step 2] Handling Subscribe Or Continue...")
