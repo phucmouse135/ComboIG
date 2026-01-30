@@ -239,6 +239,8 @@ class InstagramLoginStep:
                     if ("we detected an unusual login attempt" in body_text or "to secure your account, we'll send you a security code." in body_text) :
                         if "email" in body_text or "mail" in body_text:            
                             return "CONTINUE_UNUSUAL_LOGIN"
+                        if "this was me" in body_text or "let us know if it was you" in body_text:
+                            return "CONFIRM_TRUSTED_DEVICE"
                         return "CONTINUE_UNUSUAL_LOGIN_PHONE"
                 
                     if "choose a way to recover" in body_text:

@@ -164,6 +164,9 @@ class InstagramExceptionStep:
             wait_and_click(self.driver, By.XPATH, "//button[contains(text(), 'This Was Me') or contains(text(), 'Đây là tôi')]", timeout=20)
             WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
             time.sleep(2)
+            self.driver.get("https://www.instagram.com/")
+            WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            time.sleep(2)
             new_status = self._check_verification_result()
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
         
