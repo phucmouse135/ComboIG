@@ -210,6 +210,12 @@ class InstagramLoginStep:
                         return "LOGGED_IN_UNKNOWN_STATE"
                 else:
                     return f"ERROR_DETECT: {str(e)}"
+                
+            # The login information you entered is incorrect
+            if "the login information you entered is incorrect" in body_text or \
+                       "incorrect username or password" in body_text or \
+                        "thông tin đăng nhập bạn đã nhập không chính xác" in body_text:
+                return "LOGIN_FAILED_INCORRECT"
             
             if "choose a way to recover" in body_text:
                 return "RECOVERY_CHALLENGE"

@@ -10,6 +10,7 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from step3_post_login import InstagramPostLoginStep as step3_post_login
 
 # Import các hàm utils
 from config_utils import wait_element, wait_and_send_keys, wait_dom_ready, wait_and_click
@@ -28,7 +29,9 @@ class InstagramExceptionStep:
             self.on_password_changed = lambda username, new_password: print(f"   [Step 2] Password changed for {username}: {new_password[:3]}***")
         # Instance of step1 login
         self.step1_login = step1_login(self.driver)
-
+        # Instance of step3 post login
+        self.step3_post_login = step3_post_login(self.driver)
+        
     def _default_on_password_changed(self, username, new_password):
         """Default callback for password changes - does nothing."""
         print(f"   [Step 2] Password changed for {username}: {new_password[:3]}***")
@@ -562,25 +565,8 @@ class InstagramExceptionStep:
         # COOKIE_CONSENT_POPUP
         if status == "COOKIE_CONSENT_POPUP":
             print("   [Step 2] Handling Cookie Consent Popup...")
-            cookie_button_selectors = [
-                (By.CSS_SELECTOR, "button._a9--._ap36._asz1[tabindex='0']"),
-                (By.XPATH, "//button[contains(@class, '_a9--') and contains(@class, '_ap36') and contains(@class, '_asz1') and contains(text(), 'Allow all cookies')]"),
-                (By.XPATH, "//button[contains(text(), 'Allow all cookies')]"),
-                (By.CSS_SELECTOR, "button[aria-label*='Accept cookies']"),
-                (By.XPATH, "//button[contains(@aria-label, 'Accept')]"),
-                (By.XPATH, "//button[contains(@title, 'Accept')]"),
-                (By.CSS_SELECTOR, "button[class*='cookie']"),
-                (By.CSS_SELECTOR, "button[data-action*='accept']"),
-                (By.CSS_SELECTOR, "button[data-testid*='accept']")
-            ]
-
-            for by, selector in cookie_button_selectors:
-                if wait_and_click(self.driver, by, selector, timeout=5):
-                    print("   [Step 2] Clicked 'Allow all cookies' button")
-                    time.sleep(2)  # Wait for popup to disappear
-                    break
-            else:
-                print("   [Step 2] 'Allow all cookies' button not found or already dismissed")
+            self.step3_post_login._handle_cookie_consent()
+            time.sleep(2)
             
             wait_dom_ready(self.driver, timeout=10)
             new_status = self._check_verification_result()
@@ -1031,7 +1017,7 @@ class InstagramExceptionStep:
             print("   [Step 2] Login Failed Something Went Wrong detected. Refreshing page to retry...")
             self.driver.get("https://www.instagram.com/")
             WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
-            time.sleep(2)
+            time.sleep(3)
             new_status = self._check_verification_result()
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
         
@@ -1041,8 +1027,11 @@ class InstagramExceptionStep:
             # truy cap instagram.com
             self.driver.get("https://www.instagram.com/")
             WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            time.sleep(3)
             new_status = self._check_verification_result()
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+        
+        
         
 
         # NHÓM FAIL
@@ -1699,10 +1688,16 @@ class InstagramExceptionStep:
             print(f"   [Step 2] Page not ready after 10s: {e}")
         while time.time() < end_time:
             try:
+                # Get body text safely
+                body_text = ""
+                try:
+                    body_element = self.driver.find_element(By.TAG_NAME, "body")
+                    body_text = body_element.text.lower()
+                except:
+                    body_text = ""
+                
                 # Check URL for unblock terms
                 current_url = self.driver.current_url.lower()
-                if "unblock" in current_url:
-                    return "UNBLOCK_TERMS"
                 
                 # Check URL for cookie choice
                 if "user_cookie_choice" in current_url:
@@ -1710,10 +1705,10 @@ class InstagramExceptionStep:
                 
                 
                 #  Check your email or This email will replace all existing contact and login info on your account
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('check your email') || document.body.innerText.toLowerCase().includes('this email will replace all existing contact and login info on your account')"):
+                if 'check your email' in body_text or 'this email will replace all existing contact and login info on your account' in body_text:
                     return "CHECKPOINT_MAIL"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('change password') || document.body.innerText.toLowerCase().includes('new password') || document.body.innerText.toLowerCase().includes('create a strong password') || document.body.innerText.toLowerCase().includes('change your password to secure your account')"):
+                if 'change password' in body_text or 'new password' in body_text or 'create a strong password' in body_text or 'change your password to secure your account' in body_text:
                     # nếu có new confirm new password thì require change password
                     if len(self._safe_execute_script("return Array.from(document.querySelectorAll('input[type=\"password\"]'));", [])) >= 2:
                         return "REQUIRE_PASSWORD_CHANGE"
