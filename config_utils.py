@@ -94,8 +94,8 @@ def get_driver(headless=True , window_rect=None):
         service = Service(_get_chromedriver_path())
         driver = webdriver.Chrome(service=service, options=options)
         
-        driver.set_page_load_timeout(120) 
-        driver.set_script_timeout(120)
+        driver.set_page_load_timeout(60) 
+        driver.set_script_timeout(60)
         return driver
     except Exception as e:
         error_msg = str(e)
@@ -127,7 +127,7 @@ def parse_cookie_string(cookie_str):
 
 # --- WAITING HELPERS ---
 
-def wait_dom_ready(driver, timeout=10, poll=0.1):
+def wait_dom_ready(driver, timeout=5, poll=0.1):
     end_time = time.time() + timeout
     while time.time() < end_time:
         try:

@@ -43,7 +43,7 @@ class InstagramLoginStep:
             
             self.driver.refresh()
             # TỐI ƯU: Chờ DOM load xong thay vì ngủ cứng 3s
-            wait_dom_ready(self.driver, timeout=10)
+            wait_dom_ready(self.driver, timeout=5)
             return True
         except Exception as e:
             print(f"   [Step 1] Error loading cookies: {e}")
@@ -70,7 +70,7 @@ class InstagramLoginStep:
                 if attempts < max_attempts - 1:
                     print("   [Step 1] Refreshing page to retry finding inputs...")
                     self.driver.refresh()
-                    wait_dom_ready(self.driver, timeout=10)
+                    wait_dom_ready(self.driver, timeout=5)
                     attempts += 1
                     continue
                 else:
@@ -129,8 +129,8 @@ class InstagramLoginStep:
             time.sleep(1)
         else:
             return "FAIL_LOGIN_BUTTON_TIMEOUT"
-        wait_dom_ready(self.driver , timeout=10)
-        time.sleep(4) # Chờ thêm vài giây để trang load sau khi nhấn Login
+        wait_dom_ready(self.driver , timeout=5)
+        time.sleep(2) # Chờ thêm vài giây để trang load sau khi nhấn Login
         status = self._wait_for_login_result(timeout=120)
         
         print(f"   [Step 1] Login result detected: {status}")
@@ -175,7 +175,7 @@ class InstagramLoginStep:
         (GIỮ NGUYÊN TEXT LỖI TỪ BẢN GỐC)
         """
         try:
-            wait_dom_ready(self.driver, timeout=10)
+            wait_dom_ready(self.driver, timeout=5)
             try:
                 body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
             except Exception as e:
@@ -225,7 +225,7 @@ class InstagramLoginStep:
                 return "LOGGED_IN_SUCCESS"
             
             try:
-                wait_dom_ready(self.driver, timeout=10)
+                wait_dom_ready(self.driver, timeout=5)
                 start_time = time.time()
                 last_url = self.driver.current_url
                 while True:
