@@ -200,15 +200,40 @@ class AutomationGUI:
     def process_single_account(self, item_id, window_rect=None):
         import time
         start_time = time.time()
+        elapsed = 0  # Initialize elapsed time
         values = list(self.tree.item(item_id)['values'])
         acc = {
             "uid": values[0], "linked_mail": values[1], "username": values[2],
             "password": values[3], "gmx_user": values[5], "gmx_pass": values[6]
         }
-        self.msg_queue.put(("UPDATE_STATUS", (item_id, "Running...", "running")))
+        self.msg_queue.put(("UPDATE_STATUS", (item_id, "", "running")))
+        
+        # Single driver creation with retry on creation failure only
+        max_driver_retries = 3
         driver = None
+        
+        for driver_attempt in range(max_driver_retries):
+            try:
+                print(f"   [Driver] Attempt {driver_attempt + 1}/{max_driver_retries} to create Chrome driver...")
+                driver = get_driver(headless=self.headless_var.get(), window_rect=window_rect)
+                print("   [Driver] Chrome driver created successfully")
+                break  # Success, exit retry loop
+            except Exception as driver_error:
+                print(f"   [Driver] Failed to create Chrome driver (attempt {driver_attempt + 1}): {driver_error}")
+                if driver_attempt < max_driver_retries - 1:
+                    print("   [Driver] Retrying in 3 seconds...")
+                    time.sleep(3)
+                    continue
+                else:
+                    # All retries failed
+                    end_time = time.time()
+                    elapsed = end_time - start_time
+                    note_time = f"Chrome Crash in {elapsed:.1f}s"
+                    self.msg_queue.put(("FAIL_CRITICAL", (item_id, f"Chrome driver failed after {max_driver_retries} attempts: {str(driver_error)}", note_time)))
+                    return
+        
+        # Main process - no retry loop for application errors
         try:
-            driver = get_driver(headless=self.headless_var.get(), window_rect=window_rect)
             # Step 1: Login
             step1 = InstagramLoginStep(driver)
             # step1.load_base_cookies("Wed New Instgram  2026 .json")
@@ -224,6 +249,7 @@ class AutomationGUI:
                 self.msg_queue.put(("FAIL_CRITICAL", (item_id, status, note_time)))
                 return
             time.sleep(2)  # Chờ ổn định trang sau login
+            
             # Step 2: Handle Exception
             step2 = InstagramExceptionStep(driver)
             # Truyền callback cập nhật mật khẩu cho step2
@@ -246,6 +272,7 @@ class AutomationGUI:
                     self.msg_queue.put(("FAIL_CRITICAL", (item_id, status, note_time)))
                     return
                 time.sleep(2)  # Chờ ổn định trang sau login
+                
                 # Handle exceptions again with new password
                 final_status = step2.handle_status(status, acc['username'], acc['gmx_user'], acc['gmx_pass'], acc['linked_mail'], updated_password)
             
@@ -260,10 +287,34 @@ class AutomationGUI:
                 note_time = f"Failed in {elapsed:.1f}s"
                 self.msg_queue.put(("FAIL_CRITICAL", (item_id, f"Failed after restart: {final_status}", note_time)))
                 return
-            
-            # Step 3: Crawl
+                
+            # Step 3: Crawl with retry
             step3 = InstagramPostLoginStep(driver)
-            data = step3.process_post_login(acc['username'])
+            max_step3_retries = 2
+            data = None
+            for step3_attempt in range(max_step3_retries):
+                try:
+                    data = step3.process_post_login(acc['username'])
+                    # Check if we got valid data
+                    if data.get('cookie') and data.get('cookie') != '':
+                        break  # Success
+                    else:
+                        print(f"   [Step 3] Attempt {step3_attempt + 1} failed - no cookie, retrying...")
+                        if step3_attempt < max_step3_retries - 1:
+                            time.sleep(3)
+                except Exception as e:
+                    print(f"   [Step 3] Attempt {step3_attempt + 1} error: {e}")
+                    if step3_attempt < max_step3_retries - 1:
+                        time.sleep(3)
+                    else:
+                        raise e
+            
+            if not data or not data.get('cookie') or data.get('cookie') == '':
+                end_time = time.time()
+                elapsed = end_time - start_time
+                note_time = f"Failed to access profile in {elapsed:.1f}s"
+                self.msg_queue.put(("FAIL_CRITICAL", (item_id, "Profile access failed after retries - no data crawled", note_time)))
+                return
             
             # Gửi Cookie và Data về GUI
             self.msg_queue.put(("UPDATE_CRAWL", (item_id, {
@@ -273,12 +324,8 @@ class AutomationGUI:
                 "cookie": data.get('cookie', '')
             })))
             
-            # Thay đổi: Đánh dấu Success ngay sau crawl
-            self.msg_queue.put(("UPDATE_STATUS", (item_id, "Success", "success")))
-            # self.success_count += 1  # Tăng đếm success ngay
-
-            time.sleep(1)
-            
+            # Đánh dấu Success ở cột NOTE sau khi crawl thành công
+            self.msg_queue.put(("STEP3_SUCCESS", item_id))
             
             key = ""
             step4_started = False  # Flag to track if step 4 has started
@@ -286,7 +333,7 @@ class AutomationGUI:
                 # Step 4: 2FA
                 step4_started = True  # Mark that step 4 has started
                 step4 = Instagram2FAStep(driver)
-                # Truyền callback để cập nhật mã 2FA lên GUI ngay khi lấy được
+                # Truyền callback để cập nhật Secret Key vào cột 2FA ngay khi lấy được
                 def on_secret_key_found(secret_key):
                     self.msg_queue.put(("UPDATE_STATUS", (item_id, secret_key, None)))
                 step4.on_secret_key_found = on_secret_key_found
@@ -304,10 +351,10 @@ class AutomationGUI:
                 note_time = f"Failed in {elapsed:.1f}s"
                 msg = str(e).replace("STOP_FLOW_", "")
                 # This is a step 4 (2FA) error
-                self.msg_queue.put(("UPDATE_2FA", (item_id, msg)))
                 self.msg_queue.put(("FAIL_2FA", (item_id, msg, note_time)))
                 return  # Exit the function after handling step 4 error
         except Exception as e:
+            error_msg = str(e)
             end_time = time.time()
             elapsed = end_time - start_time
             note_time = f"Failed in {elapsed:.1f}s"
@@ -415,8 +462,9 @@ class AutomationGUI:
                 msg_type, data = self.msg_queue.get_nowait()
                 
                 if msg_type == "UPDATE_STATUS":
-                    item_id, note, tag = data
-                    self.update_tree_item(item_id, {12: note}, tag)
+                    item_id, secret_key, tag = data
+                    # Cập nhật Secret Key trực tiếp vào cột 2FA (4) ngay khi lấy được
+                    self.update_tree_item(item_id, {4: secret_key}, tag)
                 
                 elif msg_type == "UPDATE_CRAWL":
                     item_id, info = data
@@ -428,17 +476,17 @@ class AutomationGUI:
                         11: info['cookie']
                     })
                 
-                elif msg_type == "UPDATE_2FA":
-                    item_id, err = data
-                    # Cập nhật lỗi 2FA nhưng giữ lại dữ liệu crawl từ step3
-                    self.update_tree_item(item_id, {12: f"2FA Setup Failed: {err[:60]}"})
+                elif msg_type == "STEP3_SUCCESS":
+                    item_id = data
+                    # Đánh dấu success ở cột NOTE (12)
+                    self.update_tree_item(item_id, {12: "success"}, "success")
                 
                 elif msg_type == "SUCCESS":
                     item_id, key, note_time = data
                     self.success_count += 1
                     self.processed_count += 1
-                    # Cập nhật Key 2FA(4), Note(12)
-                    self.update_tree_item(item_id, {4: key, 12: f"Success | {note_time}"}, "success")
+                    # Cập nhật Key 2FA(4), Note(12) với 2FA Success
+                    self.update_tree_item(item_id, {4: key, 12: f"2FA Success | {note_time}"}, "success")
                     self.update_stats_label()
                     self.write_result_to_output(item_id, result_type="success")
                 

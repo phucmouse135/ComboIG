@@ -76,7 +76,10 @@ class InstagramExceptionStep:
         start_time = time.time()
         while time.time() - start_time < timeout:
             current_status = self._check_verification_result()
-            if current_status != initial_status:
+            if isinstance(current_status, list):
+                if initial_status not in current_status:
+                    return current_status
+            elif current_status != initial_status:
                 return current_status
             time.sleep(1)
         print(f"   [Step 2] Status unchanged after {timeout}s, redirecting to instagram.com")
@@ -522,6 +525,19 @@ class InstagramExceptionStep:
         if depth > 20:
              self._take_exception_screenshot("STOP_FLOW_LOOP", f"Max recursion depth reached")
              raise Exception("STOP_FLOW_LOOP: Max recursion depth reached")
+        
+        # Handle list of statuses (for overlapping popups)
+        if isinstance(status, list):
+            print(f"   [Step 2] Processing multiple statuses: {status}")
+            for s in status:
+                print(f"   [Step 2] Handling status: {s}")
+                result = self.handle_status(s, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth)
+                # If any status leads to success, return it
+                if result in ["LOGGED_IN_SUCCESS", "SUCCESS"]:
+                    return result
+            # If none succeeded, return the last result or the first status
+            return result if 'result' in locals() else status[0] if status else "TIMEOUT"
+        
         print(f"   [Step 2] Processing status: {status}")
         if not self._is_driver_alive():
             self._take_exception_screenshot("STOP_FLOW_CRASH", "Browser Closed")
@@ -544,7 +560,77 @@ class InstagramExceptionStep:
             new_status = self._check_verification_result()
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
         
-        # CONFIRM_TRUSTED_DEVICE
+        # DATA_PROCESSING_POPUP
+        if status == "DATA_PROCESSING_POPUP":
+            print("   [Step 2] Handling Data Processing Popup - Redirecting to instagram.com")
+            self.driver.get("https://www.instagram.com/")
+            WebDriverWait(self.driver, 10).until(lambda d: self._safe_execute_script("return document.readyState") == "complete")
+            time.sleep(2)
+            new_status = self._check_verification_result()
+            return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+        
+        # COOKIE_CONSENT_POPUP
+        if status == "COOKIE_CONSENT_POPUP":
+            print("   [Step 2] Handling Cookie Consent Popup...")
+            # Click "Allow all cookies" or similar buttons
+            success = self._robust_click_button([
+                ("css", "button._a9--._ap36._asz1[tabindex='0']"),
+                ("xpath", "//button[contains(@class, '_a9--') and contains(@class, '_ap36') and contains(@class, '_asz1') and contains(text(), 'Allow all cookies')]"),
+                ("xpath", "//button[contains(text(), 'Allow all cookies')]"),
+                ("css", "div.x1uugd1q[role='button'][tabindex='0']"),
+                ("js", """
+                    var btn = document.querySelector('div.x1uugd1q[role="button"][tabindex="0"]');
+                    if (btn && (btn.textContent.trim().toLowerCase().includes('allow all cookies') || btn.textContent.trim().toLowerCase().includes('accept all cookies'))) {
+                        return btn;
+                    }
+                    var buttons = document.querySelectorAll('button, div[role="button"]');
+                    for (var i = 0; i < buttons.length; i++) {
+                        var text = buttons[i].textContent.trim().toLowerCase();
+                        if (text.includes('allow all') || text.includes('accept all') || text.includes('allow') && text.includes('cookies') || text === 'allow all cookies' || text === 'accept all cookies') {
+                            return buttons[i];
+                        }
+                    }
+                    return null;
+                """),
+                ("xpath", "//button[contains(text(), 'Allow all cookies') or contains(text(), 'Accept all cookies') or contains(text(), 'Allow all') or contains(text(), 'Accept all')]"),
+                ("css", "button[data-testid*='cookie-accept'], button[aria-label*='Accept cookies'], button[data-cookiebanner='accept_button']"),
+                ("xpath", "//button[contains(@class, 'cookie') and contains(text(), 'Accept')]"),
+                ("xpath", "//div[contains(text(), 'Allow all cookies') and @role='button']"),
+                ("css", "button:contains('Allow all cookies'), button:contains('Accept all cookies')")
+            ], timeout=10, retries=2)
+            if success:
+                print("   [Step 2] Successfully clicked Allow all cookies")
+                time.sleep(2)
+                new_status = self._check_verification_result()
+                return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+            else:
+                print("   [Step 2] Could not find Allow all cookies button, proceeding as SUCCESS")
+                return "SUCCESS"
+        
+        # REVIEW_AGREE_DATA_CHANGES
+        if status == "REVIEW_AGREE_DATA_CHANGES":
+            print("   [Step 2] Handling Review and Agree Data Changes...")
+            success = self._robust_click_button([
+                ("xpath", "//div[@role='button' and contains(text(), 'Next')]"),
+                ("css", "div[role='button'][tabindex='0']"),
+                ("js", """
+                    var buttons = document.querySelectorAll('div[role="button"]');
+                    for (var i = 0; i < buttons.length; i++) {
+                        if (buttons[i].textContent.trim().toLowerCase().includes('next')) {
+                            return buttons[i];
+                        }
+                    }
+                    return null;
+                """)
+            ])
+            if success:
+                print("   [Step 2] Successfully clicked Next on data changes popup")
+                time.sleep(2)
+                new_status = self._check_verification_result()
+                return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
+            else:
+                print("   [Step 2] Could not find Next button on data changes popup, proceeding as SUCCESS")
+                return "SUCCESS"
         if status == "CONFIRM_TRUSTED_DEVICE":
             print("   [Step 2] Handling Confirm Trusted Device...")
             # Click "Close" button using robust method with more selectors
@@ -586,7 +672,7 @@ class InstagramExceptionStep:
             WebDriverWait(self.driver, 10).until(lambda d: self._safe_execute_script("return document.readyState") == "complete")
             time.sleep(2)
             new_status = self._check_verification_result()
-            if new_status == status:
+            if (isinstance(new_status, list) and status in new_status) or new_status == status:
                 print("   [Step 2] Status unchanged, trying to navigate away from trusted device dialog")
                 # Try to click outside the dialog or refresh the page
                 try:
@@ -596,7 +682,7 @@ class InstagramExceptionStep:
                 except:
                     pass
                 
-                if new_status == status:
+                if (isinstance(new_status, list) and status in new_status) or new_status == status:
                     new_status = self._check_status_change_with_timeout(status, 15)
             
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
@@ -623,7 +709,7 @@ class InstagramExceptionStep:
             ])
             WebDriverWait(self.driver, 10).until(lambda d: self._safe_execute_script("return document.readyState") == "complete")
             new_status = self._check_verification_result()
-            if new_status == status:
+            if (isinstance(new_status, list) and status in new_status) or new_status == status:
                 new_status = self._check_status_change_with_timeout(status, 15)
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
                 
@@ -681,7 +767,7 @@ class InstagramExceptionStep:
             
             WebDriverWait(self.driver, 10).until(lambda d: self._safe_execute_script("return document.readyState") == "complete")
             new_status = self._check_verification_result()
-            if new_status == status:
+            if (isinstance(new_status, list) and status in new_status) or new_status == status:
                 new_status = self._check_status_change_with_timeout(status, 15)
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
             
@@ -806,14 +892,14 @@ class InstagramExceptionStep:
             print(f"   [Step 2] Status after Continue: {new_status}")
             
             # Anti-hang: If status unchanged or still unusual login, check with timeout and more verification
-            if new_status == status or "UNUSUAL" in new_status:
+            if (isinstance(new_status, list) and (status in new_status or any("UNUSUAL" in s for s in new_status))) or (new_status == status or "UNUSUAL" in str(new_status)):
                 print("   [Step 2] Status indicates popup may still be present. Waiting longer...")
                 time.sleep(5)
                 new_status = self._check_verification_result()
                 print(f"   [Step 2] Status after additional wait: {new_status}")
                 
                 # If still not resolved, try to force close any modal/popups
-                if new_status == status or "UNUSUAL" in new_status:
+                if (isinstance(new_status, list) and (status in new_status or any("UNUSUAL" in s for s in new_status))) or (new_status == status or "UNUSUAL" in str(new_status)):
                     print("   [Step 2] Attempting to force close popups...")
                     try:
                         self.driver.execute_script("""
@@ -952,7 +1038,7 @@ class InstagramExceptionStep:
                 new_status = self._check_verification_result()
                 print(f"   [Step 2] Status after Birthday: {new_status}")
                 # Anti-hang: If status unchanged, refresh to avoid loop
-                if new_status == status:
+                if (isinstance(new_status, list) and status in new_status) or new_status == status:
                     print(f"   [Step 2] Status unchanged after handling {status}, refreshing to avoid hang...")
                     self.driver.refresh()
                     wait_dom_ready(self.driver, timeout=20)
@@ -973,7 +1059,7 @@ class InstagramExceptionStep:
             new_status = self._check_verification_result()
             print(f"   [Step 2] Status after Email Checkpoint: {new_status}")
             # Anti-hang: If status unchanged, refresh to avoid loop
-            if new_status == status:
+            if (isinstance(new_status, list) and status in new_status) or new_status == status:
                 print(f"   [Step 2] Status unchanged after handling {status}, refreshing to avoid hang...")
                 self.driver.refresh()
                 wait_dom_ready(self.driver, timeout=20)
@@ -1054,7 +1140,7 @@ class InstagramExceptionStep:
                 new_status = self._check_verification_result()
                 print(f"   [Step 2] Status after Birthday: {new_status}")
                 # Anti-hang: If status unchanged, refresh to avoid loop
-                if new_status == status:
+                if (isinstance(new_status, list) and status in new_status) or new_status == status:
                     print(f"   [Step 2] Status unchanged after handling {status}, refreshing to avoid hang...")
                     self.driver.refresh()
                     wait_dom_ready(self.driver, timeout=20)
@@ -1644,66 +1730,81 @@ class InstagramExceptionStep:
     def _check_verification_result(self):
         # Timeout protection for verification result (max 60s)
         # Optimized with JS checks to avoid hangs and speed up detection
+        # Now returns a list of detected statuses to handle overlapping popups
         TIMEOUT = 20
         end_time = time.time() + TIMEOUT
         consecutive_failures = 0
         max_consecutive_failures = 20  # If JS fails 20 times in a row, consider timeout
+        detected_statuses = []  # Collect all detected statuses
         try:
             WebDriverWait(self.driver, 10).until(lambda d: self._safe_execute_script("return document.readyState") == "complete")
         except Exception as e:
             print(f"   [Step 2] Page not ready after 10s: {e}")
         while time.time() < end_time:
             try:
-                
+                # Reset detected_statuses each loop to get current state
+                detected_statuses = []
                 
                 #  Check your email or This email will replace all existing contact and login info on your account
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('check your email') || document.body.innerText.toLowerCase().includes('this email will replace all existing contact and login info on your account')"):
-                    return "CHECKPOINT_MAIL"
+                    detected_statuses.append("CHECKPOINT_MAIL")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('change password') || document.body.innerText.toLowerCase().includes('new password') || document.body.innerText.toLowerCase().includes('create a strong password') || document.body.innerText.toLowerCase().includes('change your password to secure your account')"):
                     # nếu có new confirm new password thì require change password
                     if len(self._safe_execute_script("return Array.from(document.querySelectorAll('input[type=\"password\"]'));", [])) >= 2:
-                        return "REQUIRE_PASSWORD_CHANGE"
+                        detected_statuses.append("REQUIRE_PASSWORD_CHANGE")
                     else:
-                        return "CHANGE_PASSWORD"
+                        detected_statuses.append("CHANGE_PASSWORD")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('add phone number') || document.body.innerText.toLowerCase().includes('send confirmation') || document.body.innerText.toLowerCase().includes('log into another account')"):
-                    return "SUSPENDED_PHONE"
+                    detected_statuses.append("SUSPENDED_PHONE")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('select your birthday') || document.body.innerText.toLowerCase().includes('add your birthday')"):
-                    return "BIRTHDAY_SCREEN"
+                    detected_statuses.append("BIRTHDAY_SCREEN")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('allow the use of cookies') || document.body.innerText.toLowerCase().includes('posts') || document.body.innerText.toLowerCase().includes('save your login info')"):
-                    return "SUCCESS"
+                    detected_statuses.append("SUCCESS")
+                
+                # Check for data processing popup
+                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('choose if we process your data for ads') || document.body.innerText.toLowerCase().includes('process your data') || document.body.innerText.toLowerCase().includes('personalized ads')"):
+                    detected_statuses.append("DATA_PROCESSING_POPUP")
+                
+                # Check for cookie consent popup
+                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('allow all cookies') || document.body.innerText.toLowerCase().includes('accept all cookies') || document.body.innerText.toLowerCase().includes('cookie consent') || document.body.innerText.toLowerCase().includes('we use cookies')"):
+                    detected_statuses.append("COOKIE_CONSENT_POPUP")
+                
+                # Check for review and agree data changes popup
+                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('review and agree') && document.body.innerText.toLowerCase().includes('changes to how we manage data')"):
+                    detected_statuses.append("REVIEW_AGREE_DATA_CHANGES")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('suspended') || document.body.innerText.toLowerCase().includes('đình chỉ')"):
-                    return "SUSPENDED"
+                    detected_statuses.append("SUSPENDED")
                 # some thing wrong 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('something went wrong') || document.body.innerText.toLowerCase().includes('đã xảy ra sự cố')"):
-                    return "SOMETHING_WRONG"
+                    detected_statuses.append("SOMETHING_WRONG")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('sorry, there was a problem') || document.body.innerText.toLowerCase().includes('please try again')"):
-                    return "RETRY_UNUSUAL_LOGIN"
+                    detected_statuses.append("RETRY_UNUSUAL_LOGIN")
                 
                 # Check for wrong code
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('code isn\\'t right') || document.body.innerText.toLowerCase().includes('mã không đúng') || document.body.innerText.toLowerCase().includes('incorrect') || document.body.innerText.toLowerCase().includes('wrong code') || document.body.innerText.toLowerCase().includes('invalid') || document.body.innerText.toLowerCase().includes('the code you entered')"):
-                    return "WRONG_CODE"
+                    detected_statuses.append("WRONG_CODE")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('create a password at least 6 characters long') || document.body.innerText.toLowerCase().includes('password must be at least 6 characters')"):
-                    return "REQUIRE_PASSWORD_CHANGE"
+                    detected_statuses.append("REQUIRE_PASSWORD_CHANGE")
                 
                 # enter your real birthday
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('enter your real birthday') || document.body.innerText.toLowerCase().includes('nhập ngày sinh thật của bạn')"):
-                    return "REAL_BIRTHDAY_REQUIRED"
+                    detected_statuses.append("REAL_BIRTHDAY_REQUIRED")
                 
                 # use another profile va log into instagram => dang nhap lai voi data moi 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('log into instagram') || document.body.innerText.toLowerCase().includes('use another profile')"):
-                    return "RETRY_UNUSUAL_LOGIN"  
+                    detected_statuses.append("RETRY_UNUSUAL_LOGIN")  
                 
                 # URL checks
                 # current_url = self.driver.current_url
                 # if "instagram.com/" in current_url and "challenge" not in current_url:
-                #     return "SUCCESS"
+                #     detected_statuses.append("SUCCESS")
                 
                 # Element-based checks for logged in state - BE MORE CAUTIOUS
                 # Check for home screen indicators but also verify no blocking popups
@@ -1726,34 +1827,55 @@ class InstagramExceptionStep:
                     """)
                     
                     if not has_blocking_popups:
-                        return "LOGGED_IN_SUCCESS"
+                        detected_statuses.append("LOGGED_IN_SUCCESS")
                     else:
                         print("   [Step 2] Home screen detected but blocking popups/overlays present")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('save your login info') || document.body.innerText.toLowerCase().includes('we can save your login info') || document.body.innerText.toLowerCase().includes('lưu thông tin đăng nhập')"):
-                    return "LOGGED_IN_SUCCESS"
+                    detected_statuses.append("LOGGED_IN_SUCCESS")
                 
                 # save info or not now
                 if self._safe_execute_script("return (document.querySelector('button[type=\"submit\"]') !== null && (document.body.innerText.toLowerCase().includes('save info') || document.body.innerText.toLowerCase().includes('not now') || document.body.innerText.toLowerCase().includes('để sau')))"):
-                    return "LOGGED_IN_SUCCESS"
+                    detected_statuses.append("LOGGED_IN_SUCCESS")
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('save your login info') || document.body.innerText.toLowerCase().includes('we can save your login info') || document.body.innerText.toLowerCase().includes('lưu thông tin đăng nhập')"):
-                    return "LOGGED_IN_SUCCESS"
+                    detected_statuses.append("LOGGED_IN_SUCCESS")
                 
                 # save info or not now
                 if self._safe_execute_script("return (document.querySelector('button[type=\"submit\"]') !== null && (document.body.innerText.toLowerCase().includes('save info') || document.body.innerText.toLowerCase().includes('not now') || document.body.innerText.toLowerCase().includes('để sau')))"):
-                    return "LOGGED_IN_SUCCESS"
+                    detected_statuses.append("LOGGED_IN_SUCCESS")
                 
                 
                 
                 # Want to subscribe or continue
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('subscribe')"):
-                    return "SUBSCRIBE_OR_CONTINUE"
+                    detected_statuses.append("SUBSCRIBE_OR_CONTINUE")
                 
                 # Check if "get new code" option is available
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('get a new one') || document.body.innerText.toLowerCase().includes('get new code') || document.body.innerText.toLowerCase().includes('get a new code') || document.body.innerText.toLowerCase().includes('didn\\'t get a code') || document.body.innerText.toLowerCase().includes('didn\\'t receive') || document.body.innerText.toLowerCase().includes('resend') || document.body.innerText.toLowerCase().includes('send new code') || document.body.innerText.toLowerCase().includes('request new code')"):
-                    return "CAN_GET_NEW_CODE"
+                    detected_statuses.append("CAN_GET_NEW_CODE")
                 
                 consecutive_failures = 0  # Reset on successful check
+                
+                # If we have detected statuses, return them (prioritize non-success statuses)
+                if detected_statuses:
+                    # Remove duplicates
+                    detected_statuses = list(set(detected_statuses))
+                    # Sort by priority: handle critical popups first
+                    priority_order = [
+                        "REQUIRE_PASSWORD_CHANGE", "CHANGE_PASSWORD", "BIRTHDAY_SCREEN", "CHECKPOINT_MAIL",
+                        "REAL_BIRTHDAY_REQUIRED", "CONFIRM_TRUSTED_DEVICE", "SUBSCRIBE_OR_CONTINUE", "DATA_PROCESSING_POPUP", "COOKIE_CONSENT_POPUP", "REVIEW_AGREE_DATA_CHANGES",
+                        "RETRY_UNUSUAL_LOGIN", "RECOVERY_CHALLENGE", "CHECKPOINT_PHONE", "CONTINUE_UNUSUAL_LOGIN",
+                        "WRONG_CODE", "CAN_GET_NEW_CODE", "SOMETHING_WRONG", "LOGIN_FAILED_SOMETHING_WENT_WRONG",
+                        "SUSPENDED", "SUSPENDED_PHONE", "UNUSUAL_LOGIN", "TRY_ANOTHER_DEVICE", "2FA_REQUIRED",
+                        "LOGIN_FAILED_INCORRECT", "2FA_SMS", "2FA_WHATSAPP", "GET_HELP_LOG_IN", "2FA_APP",
+                        "2FA_APP_CONFIRM", "FAIL_LOGIN_REDIRECTED_TO_PROFILE_SELECTION", "LOGIN_FAILED_RETRY",
+                        "2FA_NOTIFICATIONS", "LOGGED_IN_UNKNOWN_STATE", "TIMEOUT_LOGIN_CHECK", "PAGE_BROKEN",
+                        "LOG_IN_ANOTHER_DEVICE", "CONFIRM_YOUR_IDENTITY", "2FA_TEXT_MESSAGE", "ACCOUNT_DISABLED",
+                        "CONTINUE_UNUSUAL_LOGIN_PHONE", "DISABLE_ACCOUNT",
+                        "LOGGED_IN_SUCCESS", "COOKIE_CONSENT", "TERMS_AGREEMENT", "NEW_MESSAGING_TAB", "SUCCESS"
+                    ]
+                    detected_statuses.sort(key=lambda x: priority_order.index(x) if x in priority_order else len(priority_order))
+                    return detected_statuses
             except Exception as e:
                 consecutive_failures += 1
                 if consecutive_failures >= max_consecutive_failures:
@@ -1781,7 +1903,7 @@ class InstagramExceptionStep:
                 radios = self._safe_execute_script("return Array.from(document.querySelectorAll('input[type=\"radio\"]')).length;", 0)
                 if radios > 0:
                     print(f"   [Step 2] Found {radios} radio buttons, likely checkpoint mail screen")
-                    return "CHECKPOINT_MAIL"
+                    return ["CHECKPOINT_MAIL"]
             except:
                 pass
             
@@ -1790,7 +1912,7 @@ class InstagramExceptionStep:
                 code_inputs = self._safe_execute_script("return Array.from(document.querySelectorAll('input[type=\"text\"], input[name=\"security_code\"], input[id=\"security_code\"])).length;", 0)
                 if code_inputs > 0:
                     print(f"   [Step 2] Found {code_inputs} text inputs, likely checkpoint mail screen")
-                    return "CHECKPOINT_MAIL"
+                    return ["CHECKPOINT_MAIL"]
             except:
                 pass
             
@@ -1800,13 +1922,50 @@ class InstagramExceptionStep:
                 checkpoint_keywords = ["checkpoint", "verify", "verification", "security code", "confirmation code", "email verification", "mã xác nhận", "xác nhận email"]
                 if any(keyword in full_body for keyword in checkpoint_keywords):
                     print("   [Step 2] Found checkpoint-related keywords, likely checkpoint mail screen")
-                    return "CHECKPOINT_MAIL"
+                    return ["CHECKPOINT_MAIL"]
             except:
                 pass
+            
+            # Check for login failed incorrect
+            body_lower = body_text.lower()
+            if "login failed incorrect" in body_lower or "incorrect password" in body_lower or "wrong password" in body_lower or "the password you entered is incorrect" in body_lower or "invalid credentials" in body_lower:
+                print("   [Step 2] Detected login failed incorrect")
+                return ["LOGIN_FAILED_INCORRECT"]
+            
+            # Check for other fail statuses
+            fail_keywords = {
+                "UNUSUAL_LOGIN": ["unusual login", "đăng nhập bất thường", "we suspect unusual activity"],
+                "TRY_ANOTHER_DEVICE": ["try another device", "thử thiết bị khác", "try logging in from another device"],
+                "2FA_REQUIRED": ["two-factor authentication required", "yêu cầu xác thực hai yếu tố", "2fa required"],
+                "SUSPENDED": ["account suspended", "tài khoản bị đình chỉ", "your account has been suspended"],
+                "2FA_SMS": ["send sms", "gửi tin nhắn", "text message"],
+                "2FA_WHATSAPP": ["whatsapp", "gửi qua whatsapp"],
+                "GET_HELP_LOG_IN": ["get help logging in", "cần giúp đỡ đăng nhập"],
+                "2FA_APP": ["authentication app", "ứng dụng xác thực", "authenticator app"],
+                "2FA_APP_CONFIRM": ["confirm in app", "xác nhận trong ứng dụng"],
+                "FAIL_LOGIN_REDIRECTED_TO_PROFILE_SELECTION": ["choose account", "chọn tài khoản", "switch accounts"],
+                "LOGIN_FAILED_RETRY": ["please try again", "vui lòng thử lại", "try again"],
+                "2FA_NOTIFICATIONS": ["push notification", "thông báo đẩy"],
+                "LOGGED_IN_UNKNOWN_STATE": ["unexpected error", "lỗi không mong muốn"],
+                "TIMEOUT_LOGIN_CHECK": ["timeout", "quá thời gian"],
+                "PAGE_BROKEN": ["page not found", "trang không tìm thấy", "error 404"],
+                "SUSPENDED_PHONE": ["phone suspended", "điện thoại bị đình chỉ"],
+                "LOG_IN_ANOTHER_DEVICE": ["log in another device", "đăng nhập thiết bị khác"],
+                "CONFIRM_YOUR_IDENTITY": ["confirm your identity", "xác nhận danh tính"],
+                "2FA_TEXT_MESSAGE": ["text message", "tin nhắn văn bản"],
+                "ACCOUNT_DISABLED": ["account disabled", "tài khoản bị vô hiệu hóa"],
+                "CONTINUE_UNUSUAL_LOGIN_PHONE": ["continue with phone", "tiếp tục với điện thoại"],
+                "DISABLE_ACCOUNT": ["disable account", "vô hiệu hóa tài khoản"]
+            }
+            
+            for status, keywords in fail_keywords.items():
+                if any(keyword in body_lower for keyword in keywords):
+                    print(f"   [Step 2] Detected {status} via body text")
+                    return [status]
                 
         except Exception as e:
             print(f"   [Step 2] Error logging timeout state: {e}")
-        return "TIMEOUT"
+        return ["TIMEOUT"]
 
     def _fill_input_with_delay(self, input_el, text_value):
         """Nhập text vào input với delay giữa mỗi ký tự để mô phỏng nhập thật."""

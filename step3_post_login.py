@@ -129,6 +129,14 @@ class InstagramPostLoginStep:
 
                     // B. TÌM VÀ CLICK NÚT BẤM CHUNG
                     const elements = document.querySelectorAll('button, div[role="button"]');
+                    
+                    // Specific cookie button selector for better reliability
+                    let specificCookieBtn = document.querySelector('div.x1uugd1q[role="button"][tabindex="0"]');
+                    if (specificCookieBtn && specificCookieBtn.innerText.toLowerCase().includes('allow all cookies')) {
+                        specificCookieBtn.click();
+                        return 'COOKIE_CLICKED';
+                    }
+                    
                     for (let el of elements) {
                         if (el.offsetParent === null) continue; 
                         let txt = el.innerText.toLowerCase().trim();
@@ -228,6 +236,31 @@ class InstagramPostLoginStep:
                 except: pass
 
                 time.sleep(0.5)
+
+                # Check for fail statuses
+                try:
+                    body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                    fail_keywords = {
+                        "LOGIN_FAILED_INCORRECT": ["login failed incorrect", "incorrect password", "wrong password", "invalid credentials"],
+                        "SUSPENDED": ["account suspended", "tài khoản bị đình chỉ", "your account has been suspended"],
+                        "ACCOUNT_DISABLED": ["account disabled", "tài khoản bị vô hiệu hóa"],
+                        "UNUSUAL_LOGIN": ["unusual login", "đăng nhập bất thường"],
+                        "TRY_ANOTHER_DEVICE": ["try another device", "thử thiết bị khác"],
+                        "2FA_REQUIRED": ["two-factor authentication required", "yêu cầu xác thực hai yếu tố"],
+                        "GET_HELP_LOG_IN": ["get help logging in", "cần giúp đỡ đăng nhập"],
+                        "LOG_IN_ANOTHER_DEVICE": ["log in another device", "đăng nhập thiết bị khác"],
+                        "CONFIRM_YOUR_IDENTITY": ["confirm your identity", "xác nhận danh tính"],
+                        "PAGE_BROKEN": ["page not found", "trang không tìm thấy"],
+                        "SUSPENDED_PHONE": ["phone suspended", "điện thoại bị đình chỉ"],
+                        "DISABLE_ACCOUNT": ["disable account", "vô hiệu hóa tài khoản"]
+                    }
+                    for status, keywords in fail_keywords.items():
+                        if any(keyword in body_text for keyword in keywords):
+                            raise Exception(f"STOP_FLOW_EXCEPTION: {status}")
+                except Exception as e:
+                    if "STOP_FLOW_EXCEPTION" in str(e):
+                        raise e
+                    # ignore other errors
 
             except Exception as e:
                 popup_handling_attempts += 1
@@ -507,13 +540,10 @@ class InstagramPostLoginStep:
 
                 temp_data = {"posts": p, "followers": f1, "following": f2}
 
-                # Điều kiện chấp nhận: Ít nhất 1 trường có dữ liệu
-                if temp_data["followers"] != "0" or temp_data["posts"] != "0" or temp_data["following"] != "0":
-                    final_data = temp_data
-                    print(f"   [Step 3] Success (Attempt {i}): {final_data}")
-                    break
-                else:
-                    print(f"   [Step 3] Attempt {i}: Data empty. Retrying...")
+                # Always accept the data (retry handled in gui_app.py)
+                final_data = temp_data
+                print(f"   [Step 3] Success (Attempt {i}): {final_data}")
+                break
 
             except Exception as e:
                 print(f"   [Step 3] Crawl Error (Attempt {i}): {e}")
