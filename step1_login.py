@@ -263,6 +263,10 @@ class InstagramLoginStep:
             if("save your login info?" in body_text or "we can save your login info on this browser so you don't need to enter it again." in body_text or "lưu thông tin đăng nhập của bạn" in body_text or "save info" in body_text):
                 return "LOGGED_IN_SUCCESS"
             
+            # Log into Instagram , password input 
+            if "log into instagram" in body_text or "password" in body_text or "mobile number, username, or email" in body_text or "log in with facebook" in body_text:
+                return "LOGIN_FAILED_RETRY"
+            
             try:
                 wait_dom_ready(self.driver, timeout=5)
                 start_time = time.time()
@@ -283,6 +287,10 @@ class InstagramLoginStep:
                     # you need to request help logging in To secure your account, you need to request help logging in
                     if "you need to request help logging in" in body_text or "to secure your account, you need to request help logging in" in body_text:
                         return "GET_HELP_LOG_IN"
+                    
+                    # Log into Instagram , password input 
+                    if "log into instagram" in body_text or "password" in body_text or "mobile number, username, or email" in body_text or "log in with facebook" in body_text:
+                        return "LOGIN_FAILED"
                     
                     
                     # We Detected An Unusual Login Attempt 

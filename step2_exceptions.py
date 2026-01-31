@@ -1070,7 +1070,7 @@ class InstagramExceptionStep:
             "LOGIN_FAILED_RETRY", "2FA_NOTIFICATIONS", "LOGGED_IN_UNKNOWN_STATE",
             "TIMEOUT_LOGIN_CHECK", "PAGE_BROKEN", "SUSPENDED_PHONE","LOG_IN_ANOTHER_DEVICE", 
             "CONFIRM_YOUR_IDENTITY", "2FA_TEXT_MESSAGE", 
-            "ACCOUNT_DISABLED", "CONTINUE_UNUSUAL_LOGIN_PHONE", "DISABLE_ACCOUNT"
+            "ACCOUNT_DISABLED", "CONTINUE_UNUSUAL_LOGIN_PHONE", "DISABLE_ACCOUNT", "LOGIN_FAILED"
         ]
 
         if status in fail_statuses:
@@ -1102,7 +1102,8 @@ class InstagramExceptionStep:
             wait_dom_ready(self.driver, timeout=20)
             new_status = self._check_verification_result()
             return self.handle_status(new_status, ig_username, gmx_user, gmx_pass, linked_mail, ig_password, depth + 1)
-
+            
+        
         # UNBLOCK_ACCOUNT
         if status == "UNBLOCK_ACCOUNT":
             print("   [Step 2] Handling Unblock Account...")
