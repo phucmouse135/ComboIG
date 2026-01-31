@@ -60,12 +60,10 @@ class InstagramLoginStep:
             (By.CSS_SELECTOR, "button._a9--._ap36._asz1[tabindex='0']"),
             (By.XPATH, "//button[contains(@class, '_a9--') and contains(@class, '_ap36') and contains(@class, '_asz1') and contains(text(), 'Allow all cookies')]"),
             (By.XPATH, "//button[contains(text(), 'Allow all cookies')]"),
-            (By.CSS_SELECTOR, "button[data-testid*='cookie-accept']"),
             (By.CSS_SELECTOR, "button[aria-label*='Accept cookies']"),
-            (By.CSS_SELECTOR, "button[data-cookiebanner='accept_button']"),
-            (By.CSS_SELECTOR, "button[class*='cookie']"),
             (By.XPATH, "//button[contains(@aria-label, 'Accept')]"),
             (By.XPATH, "//button[contains(@title, 'Accept')]"),
+            (By.CSS_SELECTOR, "button[class*='cookie']"),
             (By.CSS_SELECTOR, "button[data-action*='accept']"),
             (By.CSS_SELECTOR, "button[data-testid*='accept']")
         ]
@@ -131,8 +129,23 @@ class InstagramLoginStep:
         else:
             return "FAIL_LOGIN_BUTTON_TIMEOUT"
         wait_dom_ready(self.driver , timeout=5)
-        time.sleep(2) # Chờ thêm vài giây để trang load sau khi nhấn Login
+        time.sleep(4) # Chờ thêm vài giây để trang load sau khi nhấn Login
         status = self._wait_for_login_result(timeout=120)
+        
+        # Handle cookie consent popup after login if detected
+        if status == "COOKIE_CONSENT_POPUP":
+            print("   [Step 1] Handling cookie consent popup after login...")
+            for by, selector in cookie_button_selectors:
+                if wait_and_click(self.driver, by, selector, timeout=5):
+                    print("   [Step 1] Clicked 'Allow all cookies' button after login")
+                    time.sleep(2)  # Wait for popup to disappear
+                    break
+            else:
+                print("   [Step 1] 'Allow all cookies' button not found after login")
+            
+            wait_dom_ready(self.driver, timeout=10)
+            status = self._detect_initial_status()
+            print(f"   [Step 1] Status after cookie handling: {status}")
         
         print(f"   [Step 1] Login result detected: {status}")
         return status

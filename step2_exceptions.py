@@ -287,12 +287,15 @@ class InstagramExceptionStep:
             for input_attempt in range(3):
                 try:
                     # Strategy 1: Direct Selenium input
+                    if new_pass_input is None:
+                        print(f"   [Step 2] New password input is None, skipping attempt {input_attempt+1}")
+                        continue
                     new_pass_input.clear()
                     new_pass_input.send_keys(new_password)
                     print(f"   [Step 2] Entered new password in first field (attempt {input_attempt+1})")
                     time.sleep(1)
 
-                    if confirm_pass_input != new_pass_input:
+                    if confirm_pass_input is not None and confirm_pass_input != new_pass_input:
                         confirm_pass_input.clear()
                         confirm_pass_input.send_keys(new_password)
                         print(f"   [Step 2] Entered confirm password in second field (attempt {input_attempt+1})")
@@ -527,12 +530,13 @@ class InstagramExceptionStep:
             self._take_exception_screenshot("STOP_FLOW_CRASH", "Browser Closed")
             raise Exception("STOP_FLOW_CRASH: Browser Closed")
 
+
         success_statuses = [
             "LOGGED_IN_SUCCESS", "COOKIE_CONSENT", "TERMS_AGREEMENT", 
             "NEW_MESSAGING_TAB", "SUCCESS"
         ]
         if status in success_statuses:
-            print(f"   [Step 2] Status {status} indicates successful login. No action needed.")
+            print(f"   [Step 2] Success status reached: {status}")
             return status
         
         # "REAL_BIRTHDAY_REQUIRED"
@@ -551,12 +555,10 @@ class InstagramExceptionStep:
                 (By.CSS_SELECTOR, "button._a9--._ap36._asz1[tabindex='0']"),
                 (By.XPATH, "//button[contains(@class, '_a9--') and contains(@class, '_ap36') and contains(@class, '_asz1') and contains(text(), 'Allow all cookies')]"),
                 (By.XPATH, "//button[contains(text(), 'Allow all cookies')]"),
-                (By.CSS_SELECTOR, "button[data-testid*='cookie-accept']"),
                 (By.CSS_SELECTOR, "button[aria-label*='Accept cookies']"),
-                (By.CSS_SELECTOR, "button[data-cookiebanner='accept_button']"),
-                (By.CSS_SELECTOR, "button[class*='cookie']"),
                 (By.XPATH, "//button[contains(@aria-label, 'Accept')]"),
                 (By.XPATH, "//button[contains(@title, 'Accept')]"),
+                (By.CSS_SELECTOR, "button[class*='cookie']"),
                 (By.CSS_SELECTOR, "button[data-action*='accept']"),
                 (By.CSS_SELECTOR, "button[data-testid*='accept']")
             ]
@@ -1623,6 +1625,9 @@ class InstagramExceptionStep:
             filled_count = 0
             for inp in visible_inputs:
                 if filled_count >= 2: break # Safety: Chỉ điền tối đa 2 ô để tránh điền nhầm vào ô 'Old Password' nếu form quá dị
+                if not inp:
+                    print(f"   [Step 2] Warning: Input element is None, skipping")
+                    continue
                 try:
                     inp.click()
                     inp.clear()
@@ -1710,7 +1715,7 @@ class InstagramExceptionStep:
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('select your birthday') || document.body.innerText.toLowerCase().includes('add your birthday')"):
                     return "BIRTHDAY_SCREEN"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('allow the use of cookies') || document.body.innerText.toLowerCase().includes('posts') || document.body.innerText.toLowerCase().includes('save your login info')"):
+                if self._safe_execute_script("return document.body.innerText.toLowerCase().document.body.innerText.toLowerCase().includes('posts') || document.body.innerText.toLowerCase().includes('save your login info')"):
                     return "SUCCESS"
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('suspended') || document.body.innerText.toLowerCase().includes('đình chỉ')"):
@@ -1736,36 +1741,6 @@ class InstagramExceptionStep:
                 # use another profile va log into instagram => dang nhap lai voi data moi 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('log into instagram') || document.body.innerText.toLowerCase().includes('use another profile')"):
                     return "RETRY_UNUSUAL_LOGIN"  
-                
-                # URL checks
-                # current_url = self.driver.current_url
-                # if "instagram.com/" in current_url and "challenge" not in current_url:
-                #     return "SUCCESS"
-                
-                # Element-based checks for logged in state - BE MORE CAUTIOUS
-                # Check for home screen indicators but also verify no blocking popups
-                home_indicators = self._safe_execute_script("return document.body.innerText.toLowerCase().includes('posts') || document.body.innerText.toLowerCase().includes('followers') || document.body.innerText.toLowerCase().includes('search') || document.body.innerText.toLowerCase().includes('home')")
-                
-                if home_indicators:
-                    # Additional check: ensure no modal dialogs are blocking the interface
-                    has_blocking_popups = self._safe_execute_script("""
-                        var dialogs = document.querySelectorAll('div[role="dialog"], div[role="alertdialog"]');
-                        var hasVisibleDialog = Array.from(dialogs).some(d => d.offsetParent !== null);
-                        
-                        // Also check for overlays that might block interaction
-                        var overlays = document.querySelectorAll('div[aria-hidden="false"], div[data-testid*="modal"], div[style*="z-index"]');
-                        var hasVisibleOverlay = Array.from(overlays).some(o => {
-                            var style = window.getComputedStyle(o);
-                            return style.display !== 'none' && style.visibility !== 'hidden' && o.offsetParent !== null;
-                        });
-                        
-                        return hasVisibleDialog || hasVisibleOverlay;
-                    """)
-                    
-                    if not has_blocking_popups:
-                        return "LOGGED_IN_SUCCESS"
-                    else:
-                        print("   [Step 2] Home screen detected but blocking popups/overlays present")
                 
                 if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('save your login info') || document.body.innerText.toLowerCase().includes('we can save your login info') || document.body.innerText.toLowerCase().includes('lưu thông tin đăng nhập')"):
                     return "LOGGED_IN_SUCCESS"

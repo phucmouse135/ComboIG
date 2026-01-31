@@ -288,15 +288,22 @@ class AutomationGUI:
                 self.msg_queue.put(("FAIL_CRITICAL", (item_id, f"Failed after restart: {final_status}", note_time)))
                 return
                 
-            # Step 3: Crawl with retry
+            # Step 3: Crawl in new tab
+            # Open new tab for step 3
+            driver.execute_script("window.open('https://www.instagram.com/');")
+            windows = driver.window_handles
+            main_window = windows[0]
+            new_window = windows[-1]
+            driver.switch_to.window(new_window)
+            
             step3 = InstagramPostLoginStep(driver)
-            max_step3_retries = 2
+            max_step3_retries = 3
             data = None
             for step3_attempt in range(max_step3_retries):
                 try:
                     data = step3.process_post_login(acc['username'])
                     # Check if we got valid data
-                    if data.get('cookie') and data.get('cookie') != '':
+                    if data and data.get('cookie') and data.get('cookie') != '':
                         break  # Success
                     else:
                         print(f"   [Step 3] Attempt {step3_attempt + 1} failed - no cookie, retrying...")
@@ -307,14 +314,29 @@ class AutomationGUI:
                     if step3_attempt < max_step3_retries - 1:
                         time.sleep(3)
                     else:
-                        raise e
+                        data = None
             
             if not data or not data.get('cookie') or data.get('cookie') == '':
                 end_time = time.time()
                 elapsed = end_time - start_time
                 note_time = f"Failed to access profile in {elapsed:.1f}s"
                 self.msg_queue.put(("FAIL_CRITICAL", (item_id, "Profile access failed after retries - no data crawled", note_time)))
+                # Close new tab and switch back
+                driver.close()
+                driver.switch_to.window(main_window)
                 return
+            
+            # Gửi Cookie và Data về GUI
+            self.msg_queue.put(("UPDATE_CRAWL", (item_id, {
+                "posts": data.get('posts', '0'),
+                "followers": data.get('followers', '0'),
+                "following": data.get('following', '0'),
+                "cookie": data.get('cookie', '')
+            })))
+            
+            # Close new tab and switch back to main
+            driver.close()
+            driver.switch_to.window(main_window)
             
             # Gửi Cookie và Data về GUI
             self.msg_queue.put(("UPDATE_CRAWL", (item_id, {
@@ -470,7 +492,7 @@ class AutomationGUI:
                     item_id, info = data
                     # Cập nhật Post(8), Follow(9), Following(10), Cookie(11)
                     self.update_tree_item(item_id, {
-                        8: info['post'], 
+                        8: info['posts'], 
                         9: info['followers'], 
                         10: info['following'],
                         11: info['cookie']
