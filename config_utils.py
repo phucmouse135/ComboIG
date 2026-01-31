@@ -4,7 +4,7 @@ import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+import os
 
 
 _CHROMEDRIVER_PATH = None
@@ -17,17 +17,13 @@ def _get_chromedriver_path():
         return _CHROMEDRIVER_PATH
     with _CHROMEDRIVER_LOCK:
         if not _CHROMEDRIVER_PATH:
-            try:
-                # Try latest compatible version first
-                _CHROMEDRIVER_PATH = ChromeDriverManager().install()
-            except Exception as e:
-                print(f"Failed to get latest ChromeDriver: {e}")
-                # Fallback to a known stable version
-                try:
-                    _CHROMEDRIVER_PATH = ChromeDriverManager(version="131.0.5772.102").install()
-                except Exception as e2:
-                    print(f"Fallback ChromeDriver also failed: {e2}")
-                    raise e
+            # Use bundled chromedriver.exe
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            chromedriver_path = os.path.join(current_dir, 'chromedriver.exe')
+            if os.path.exists(chromedriver_path):
+                _CHROMEDRIVER_PATH = chromedriver_path
+            else:
+                raise FileNotFoundError(f"chromedriver.exe not found at {chromedriver_path}")
     return _CHROMEDRIVER_PATH
 
 def ensure_chromedriver():
