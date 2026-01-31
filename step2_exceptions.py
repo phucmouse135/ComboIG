@@ -1118,6 +1118,7 @@ class InstagramExceptionStep:
             print("   [Step 2] TIMEOUT persisted after retries. Redirecting to instagram.com as fallback...")
             # profile 
             self.driver.get("https://www.instagram.com/{}/".format(ig_username))
+            self.step3_post_login._handle_interruptions()
             WebDriverWait(self.driver, 10).until(lambda d: self._safe_execute_script("return document.readyState") == "complete")
             time.sleep(2)
             new_status = self._check_verification_result()
@@ -1745,7 +1746,7 @@ class InstagramExceptionStep:
                 if 'suspended' in body_text or 'đình chỉ' in body_text:
                     return "SUSPENDED"
                 # some thing wrong 
-                if 'something went wrong' in body_text or 'đã xảy ra sự cố' in body_text:
+                if 'something went wrong' in body_text or 'đã xảy ra sự cố' in body_text or "this page isn’t working" in body_text or 'the site is temporarily unavailable' in body_text:
                     return "SOMETHING_WRONG"
                 
                 if 'sorry, there was a problem' in body_text or 'please try again' in body_text:
@@ -1761,6 +1762,10 @@ class InstagramExceptionStep:
                 # enter your real birthday
                 if 'enter your real birthday' in body_text or 'nhập ngày sinh thật của bạn' in body_text:
                     return "REAL_BIRTHDAY_REQUIRED"
+                
+                # for you , following , also from meta, Suggested for you
+                if 'for you' in body_text or 'following' in body_text or 'suggested for you' in body_text:
+                    return "LOGGED_IN_SUCCESS"
                 
                 # use another profile va log into instagram => dang nhap lai voi data moi 
                 if 'log into instagram' in body_text or 'use another profile' in body_text:

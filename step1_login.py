@@ -10,6 +10,7 @@ class InstagramLoginStep:
     def __init__(self, driver):
         self.driver = driver
         self.base_url = "https://www.instagram.com/"
+        self.count = 0
 
     def load_base_cookies(self, json_path):
         """
@@ -128,7 +129,7 @@ class InstagramLoginStep:
             time.sleep(1)
         else:
             return "FAIL_LOGIN_BUTTON_TIMEOUT"
-        wait_dom_ready(self.driver , timeout=5)
+        wait_dom_ready(self.driver , timeout=20)
         time.sleep(4) # Chờ thêm vài giây để trang load sau khi nhấn Login
         status = self._wait_for_login_result(timeout=120)
         
@@ -143,7 +144,7 @@ class InstagramLoginStep:
             else:
                 print("   [Step 1] 'Allow all cookies' button not found after login")
             
-            wait_dom_ready(self.driver, timeout=10)
+            wait_dom_ready(self.driver, timeout=20)
             status = self._detect_initial_status()
             print(f"   [Step 1] Status after cookie handling: {status}")
         
@@ -175,12 +176,13 @@ class InstagramLoginStep:
         
         while time.time() < end_time:
             status = self._detect_initial_status()
+            print(f"   [Step 1] Intermediate login status: {status}")
             
             # Nếu status đã rõ ràng (không phải Unknown/Retry) -> Return ngay
-            if status not in ["LOGGED_IN_UNKNOWN_STATE", "LOGIN_FAILED_RETRY"]:
+            if status not in ["LOGGED_IN_UNKNOWN_STATE"]:
                 return status
             
-            time.sleep(0.5) 
+            time.sleep(2)  # Poll nhẹ
             
         return "TIMEOUT_LOGIN_CHECK"
     def _detect_initial_status(self):
@@ -263,9 +265,7 @@ class InstagramLoginStep:
             if("save your login info?" in body_text or "we can save your login info on this browser so you don't need to enter it again." in body_text or "lưu thông tin đăng nhập của bạn" in body_text or "save info" in body_text):
                 return "LOGGED_IN_SUCCESS"
             
-            # Log into Instagram , password input 
-            if "log into instagram" in body_text or "password" in body_text or "mobile number, username, or email" in body_text or "log in with facebook" in body_text:
-                return "LOGIN_FAILED_RETRY"
+            
             
             try:
                 wait_dom_ready(self.driver, timeout=5)
@@ -287,11 +287,6 @@ class InstagramLoginStep:
                     # you need to request help logging in To secure your account, you need to request help logging in
                     if "you need to request help logging in" in body_text or "to secure your account, you need to request help logging in" in body_text:
                         return "GET_HELP_LOG_IN"
-                    
-                    # Log into Instagram , password input 
-                    if "log into instagram" in body_text or "password" in body_text or "mobile number, username, or email" in body_text or "log in with facebook" in body_text:
-                        return "LOGIN_FAILED"
-                    
                     
                     # We Detected An Unusual Login Attempt 
                     if ("we detected an unusual login attempt" in body_text or "to secure your account, we'll send you a security code." in body_text) :
@@ -378,9 +373,7 @@ class InstagramLoginStep:
                     if "use another profile" in body_text or "Log into Instagram" in body_text:
                         return "FAIL_LOGIN_REDIRECTED_TO_PROFILE_SELECTION"
 
-                    # Nếu vẫn còn ô password -> Login chưa qua (có thể đang loading)
-                    if len(self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")) > 0:
-                        return "LOGIN_FAILED_RETRY"
+                    
 
                     # Check your notifications  && Check your notifications there and approve the login to continue.
                     if "check your notifications" in body_text or "xem thông báo của bạn" in body_text or "check your notifications there and approve the login to continue." in body_text:
@@ -392,6 +385,18 @@ class InstagramLoginStep:
 
                     if("save your login info?" in body_text or "we can save your login info on this browser so you don't need to enter it again." in body_text or "lưu thông tin đăng nhập của bạn" in body_text):
                         return "LOGGED_IN_SUCCESS"
+                    
+                    # Log into Instagram , password input 
+                    if "log into instagram" in body_text or "password" in body_text or "mobile number, username, or email" in body_text or "log in with facebook" in body_text or "create new account" in body_text:
+                        self.count += 1
+                        if self.count >=10:
+                            return "LOGIN_FAILED"
+                    
+                    # Nếu vẫn còn ô password -> Login chưa qua (có thể đang loading)
+                    if len(self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")) > 0:
+                        self.count += 1
+                        if self.count >=10:
+                            return "LOGIN_FAILED_RETRY"
 
                     # Nếu không xác định được trạng thái, kiểm tra loading hoặc url đứng yên
                     loading_selectors = [
