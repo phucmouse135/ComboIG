@@ -30,9 +30,6 @@ class InstagramPostLoginStep:
         # las t check các popup lần nữa trước khi crawl
         self._handle_interruptions()
         
-        # 2. Điều hướng vào Profile
-        self._navigate_to_profile(username)
-        
         # 3. Crawl Dữ liệu
         data = self._crawl_data(username)
         
@@ -55,7 +52,25 @@ class InstagramPostLoginStep:
         while time.time() < end_time and popup_handling_attempts < max_popup_attempts: 
             try:
                 # ---------------------------------------------------------
-                # 1. QUÉT TRẠNG THÁI (POPUP + HOME) BẰNG JS
+                # 0. INDIVIDUAL POPUP HANDLERS (Riêng lẻ cho từng loại)
+                # ---------------------------------------------------------
+                if self._handle_age_verification():
+                    print("   [Step 3] Handled Age Verification individually")
+                    time.sleep(3)
+                    continue
+                
+                if self._handle_accounts_center():
+                    print("   [Step 3] Handled Accounts Center individually")
+                    time.sleep(1)
+                    continue
+                
+                if self._handle_cookie_consent():
+                    print("   [Step 3] Handled Cookie Consent individually")
+                    time.sleep(1)
+                    continue
+                
+                # --------------------------------------------------------- 
+                # 1. SEQUENTIAL SCAN (POPUP + HOME) BẰNG JS
                 # ---------------------------------------------------------
                 action_result = self.driver.execute_script("""
                     // 1. KIỂM TRA HOME TRƯỚC (Điều kiện thoát nhanh)
@@ -332,6 +347,66 @@ class InstagramPostLoginStep:
         
         except Exception as e:
             print(f"   [Step 3] Error in fallback click: {e}")
+            return False
+
+    def _handle_age_verification(self):
+        """Handle age verification popup individually."""
+        try:
+            radio = self.driver.find_element(By.CSS_SELECTOR, 'input[type="radio"][value="above_18"]')
+            radio.click()
+            
+            # Try to click container
+            try:
+                container = radio.find_element(By.XPATH, './ancestor::div[@role="button"]')
+                if container:
+                    container.click()
+            except:
+                pass
+            
+            # Try visual circle
+            try:
+                visual_circle = radio.find_element(By.XPATH, './preceding-sibling::*')
+                if visual_circle:
+                    visual_circle.click()
+            except:
+                pass
+            
+            # Auto click agree after 0.5s
+            time.sleep(0.5)
+            buttons = self.driver.find_elements(By.CSS_SELECTOR, 'button, div[role="button"]')
+            for b in buttons:
+                if 'agree' in b.text.lower() or 'đồng ý' in b.text.lower():
+                    b.click()
+                    return True
+            
+            return True  # Even if agree not clicked, age was handled
+        except:
+            return False
+
+    def _handle_accounts_center(self):
+        """Handle accounts center popup individually."""
+        try:
+            body_text = self.driver.find_element(By.TAG_NAME, 'body').text.lower()
+            if 'choose an option' in body_text or 'accounts center' in body_text or 'use data across accounts' in body_text:
+                buttons = self.driver.find_elements(By.CSS_SELECTOR, 'button, div[role="button"], span')
+                for b in buttons:
+                    if b.text.lower().strip() in ['next', 'tiếp', 'continue']:
+                        b.click()
+                        return True
+            return False
+        except:
+            return False
+
+    def _handle_cookie_consent(self):
+        """Handle cookie consent popup individually."""
+        try:
+            buttons = self.driver.find_elements(By.CSS_SELECTOR, 'button, div[role="button"]')
+            for b in buttons:
+                if 'allow all cookies' in b.text.lower() or 'cho phép tất cả' in b.text.lower():
+                    b.click()
+                    return True
+            return False
+        except:
             return False
 
     def _ensure_instagram_ready(self):

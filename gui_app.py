@@ -158,7 +158,7 @@ class AutomationGUI:
         ttk.Button(bottom_frame, text="Clear All", command=self.clear_all_data).pack(side="left", padx=5)
         ttk.Separator(bottom_frame, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Button(bottom_frame, text="Export Success", command=lambda: self.export_data("success")).pack(side="left", padx=5)
-        ttk.Button(bottom_frame, text="Export Login Success (No 2FA)", command=lambda: self.export_data("login_success_no_2fa")).pack(side="left", padx=5)
+        ttk.Button(bottom_frame, text="Export 2FA Errors", command=lambda: self.export_data("2fa_errors")).pack(side="left", padx=5)
         ttk.Button(bottom_frame, text="Export Failed", command=lambda: self.export_data("failed")).pack(side="left", padx=5)
         ttk.Button(bottom_frame, text="Export No Success", command=lambda: self.export_data("no_success")).pack(side="left", padx=5)
         ttk.Button(bottom_frame, text="Export All", command=lambda: self.export_data("all")).pack(side="left", padx=5)
@@ -334,20 +334,12 @@ class AutomationGUI:
                 "cookie": data.get('cookie', '')
             })))
             
+            # Đánh dấu Success ở cột NOTE sau khi crawl thành công
+            self.msg_queue.put(("STEP3_SUCCESS", item_id))
+            
             # Close new tab and switch back to main
             driver.close()
             driver.switch_to.window(main_window)
-            
-            # Gửi Cookie và Data về GUI
-            self.msg_queue.put(("UPDATE_CRAWL", (item_id, {
-                "post": data.get('posts', '0'),
-                "followers": data.get('followers', '0'),
-                "following": data.get('following', '0'),
-                "cookie": data.get('cookie', '')
-            })))
-            
-            # Đánh dấu Success ở cột NOTE sau khi crawl thành công
-            self.msg_queue.put(("STEP3_SUCCESS", item_id))
             
             key = ""
             step4_started = False  # Flag to track if step 4 has started
@@ -455,6 +447,7 @@ class AutomationGUI:
                     note_time = "Skipped (2FA exists)"
                     self.update_tree_item(i, {12: f"Success | {note_time}"}, "success")
                     self.success_count += 1
+                    self.write_result_to_output(i, result_type="success")
         if not pending_items:
             messagebox.showinfo("Info", "No 'Pending' items to process.")
             self.update_stats_label()
@@ -496,7 +489,7 @@ class AutomationGUI:
                         9: info['followers'], 
                         10: info['following'],
                         11: info['cookie']
-                    })
+                    }, "success")
                 
                 elif msg_type == "STEP3_SUCCESS":
                     item_id = data
@@ -692,7 +685,7 @@ class AutomationGUI:
                 should_export = False
                 if mode == "all": should_export = True
                 elif mode == "success" and "success" in note: should_export = True
-                elif mode == "login_success_no_2fa" and "success" in note and not vals[4].strip(): should_export = True
+                elif mode == "2fa_errors" and "error_2fa" in str(vals[4]).lower(): should_export = True
                 elif mode == "failed" and ("fail" in note or "error" in note): should_export = True
                 elif mode == "no_success" and "success" not in note: should_export = True
                 
