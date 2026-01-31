@@ -236,7 +236,7 @@ class Instagram2FAStep:
             time.sleep(2) # Chờ popup
             
             is_error_popup = self.driver.execute_script("""
-                var body = document.body.innerText.toLowerCase();
+                var body = (document.body && document.body.innerText.toLowerCase()) || '';
                 var keywords = ["content is no longer available", "không khả dụng", "không hiển thị được lúc này"];
                 return keywords.some(k => body.includes(k));
             """)
@@ -308,7 +308,7 @@ class Instagram2FAStep:
             
             while time.time() < end_confirm:
                 res = self.driver.execute_script("""
-                    var body = document.body.innerText.toLowerCase();
+                    var body = (document.body && document.body.innerText.toLowerCase()) || '';
                     if (body.includes("code isn't right") || body.includes("mã không đúng")) return 'WRONG_OTP';
                     if (body.includes("this content is no longer available") || body.includes("không khả dụng")) return 'SUCCESS';
                     
@@ -393,7 +393,7 @@ class Instagram2FAStep:
         # [UPDATED] JS Sensor nhanh + check Content Unavailable
         js_sensor = """
         function checkState() {
-            var body = document.body.innerText.toLowerCase();
+            var body = (document.body && document.body.innerText.toLowerCase()) || '';
             var url = window.location.href;
 
             if (body.includes("content is no longer available")) return 'BROKEN';
@@ -475,7 +475,7 @@ class Instagram2FAStep:
                     if curr in ['SELECT_APP', 'ALREADY_ON']:
                         checkpoint_passed = True; print("   [Step 4] Checkpoint Passed!"); break
                     
-                    err_msg = self.driver.execute_script("return document.body.innerText.toLowerCase()")
+                    err_msg = self.driver.execute_script("return (document.body && document.body.innerText.toLowerCase()) || ''")
                     if ("isn't right" in err_msg or "không đúng" in err_msg or "incorrect" in err_msg or 
                         "the code you entered" in err_msg or "mã bạn đã nhập" in err_msg or "wrong code" in err_msg or 
                         "code is invalid" in err_msg or "mã không hợp lệ" in err_msg):

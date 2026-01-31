@@ -100,7 +100,7 @@ class InstagramPostLoginStep:
                         'age_check': ['18 or older', '18 tuổi trở lên', 'trên 18 tuổi'],
                         'account_center_check': ['choose an option', 'accounts center', 'use data across accounts'] 
                     };
-                    const bodyText = document.body.innerText.toLowerCase();
+                    const bodyText = (document.body && document.body.innerText.toLowerCase()) || '';
 
                     // --- ƯU TIÊN: POPUP "ACCOUNTS CENTER" ---
                     if (keywords.account_center_check.some(k => bodyText.includes(k))) {
@@ -201,9 +201,10 @@ class InstagramPostLoginStep:
                             });
                             
                             // Check for unusual login popups specifically
-                            var unusualLogin = document.body.innerText.toLowerCase().includes('we detected an unusual login attempt') ||
-                                              document.body.innerText.toLowerCase().includes('continue') ||
-                                              document.body.innerText.toLowerCase().includes('this was me');
+                            var bodyText = (document.body && document.body.innerText.toLowerCase()) || '';
+                            var unusualLogin = bodyText.includes('we detected an unusual login attempt') ||
+                                              bodyText.includes('continue') ||
+                                              bodyText.includes('this was me');
                             
                             return !(hasVisibleDialog || hasVisibleOverlay || unusualLogin);
                         """)

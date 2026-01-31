@@ -618,7 +618,8 @@ class InstagramExceptionStep:
                 print("   [Step 2] Status unchanged, trying to navigate away from trusted device dialog")
                 # Try to click outside the dialog or refresh the page
                 try:
-                    self._safe_execute_script("document.body.click();")
+                    body = self.driver.find_element(By.TAG_NAME, "body")
+                    body.click()
                     time.sleep(2)
                     new_status = self._check_verification_result()
                 except:
@@ -1715,60 +1716,73 @@ class InstagramExceptionStep:
                     else:
                         return "CHANGE_PASSWORD"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('add phone number') || document.body.innerText.toLowerCase().includes('send confirmation') || document.body.innerText.toLowerCase().includes('log into another account')"):
+                if 'add phone number' in body_text or 'send confirmation' in body_text or 'log into another account' in body_text:
                     return "SUSPENDED_PHONE"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('select your birthday') || document.body.innerText.toLowerCase().includes('add your birthday')"):
+                if 'select your birthday' in body_text or 'add your birthday' in body_text:
                     return "BIRTHDAY_SCREEN"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().document.body.innerText.toLowerCase().includes('posts') || document.body.innerText.toLowerCase().includes('save your login info')"):
+                if 'posts' in body_text or 'save your login info' in body_text:
                     return "SUCCESS"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('suspended') || document.body.innerText.toLowerCase().includes('đình chỉ')"):
+                if 'suspended' in body_text or 'đình chỉ' in body_text:
                     return "SUSPENDED"
                 # some thing wrong 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('something went wrong') || document.body.innerText.toLowerCase().includes('đã xảy ra sự cố')"):
+                if 'something went wrong' in body_text or 'đã xảy ra sự cố' in body_text:
                     return "SOMETHING_WRONG"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('sorry, there was a problem') || document.body.innerText.toLowerCase().includes('please try again')"):
+                if 'sorry, there was a problem' in body_text or 'please try again' in body_text:
                     return "RETRY_UNUSUAL_LOGIN"
                 
                 # Check for wrong code
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('code isn\\'t right') || document.body.innerText.toLowerCase().includes('mã không đúng') || document.body.innerText.toLowerCase().includes('incorrect') || document.body.innerText.toLowerCase().includes('wrong code') || document.body.innerText.toLowerCase().includes('invalid') || document.body.innerText.toLowerCase().includes('the code you entered')"):
+                if 'code isn\'t right' in body_text or 'mã không đúng' in body_text or 'incorrect' in body_text or 'wrong code' in body_text or 'invalid' in body_text or 'the code you entered' in body_text:
                     return "WRONG_CODE"
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('create a password at least 6 characters long') || document.body.innerText.toLowerCase().includes('password must be at least 6 characters')"):
+                if 'create a password at least 6 characters long' in body_text or 'password must be at least 6 characters' in body_text:
                     return "REQUIRE_PASSWORD_CHANGE"
                 
                 # enter your real birthday
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('enter your real birthday') || document.body.innerText.toLowerCase().includes('nhập ngày sinh thật của bạn')"):
+                if 'enter your real birthday' in body_text or 'nhập ngày sinh thật của bạn' in body_text:
                     return "REAL_BIRTHDAY_REQUIRED"
                 
                 # use another profile va log into instagram => dang nhap lai voi data moi 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('log into instagram') || document.body.innerText.toLowerCase().includes('use another profile')"):
+                if 'log into instagram' in body_text or 'use another profile' in body_text:
                     return "RETRY_UNUSUAL_LOGIN"  
                 
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('save your login info') || document.body.innerText.toLowerCase().includes('we can save your login info') || document.body.innerText.toLowerCase().includes('lưu thông tin đăng nhập')"):
+                if 'save your login info' in body_text or 'we can save your login info' in body_text or 'lưu thông tin đăng nhập' in body_text:
                     return "LOGGED_IN_SUCCESS"
                 
                 # save info or not now
-                if self._safe_execute_script("return (document.querySelector('button[type=\"submit\"]') !== null && (document.body.innerText.toLowerCase().includes('save info') || document.body.innerText.toLowerCase().includes('not now') || document.body.innerText.toLowerCase().includes('để sau')))"):
+                if self._safe_execute_script("return (document.querySelector('button[type=\"submit\"]') !== null && ('save info' in body_text || 'not now' in body_text || 'để sau' in body_text))", False):
                     return "LOGGED_IN_SUCCESS"
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('save your login info') || document.body.innerText.toLowerCase().includes('we can save your login info') || document.body.innerText.toLowerCase().includes('lưu thông tin đăng nhập')"):
+                if 'save your login info' in body_text or 'we can save your login info' in body_text or 'lưu thông tin đăng nhập' in body_text:
                     return "LOGGED_IN_SUCCESS"
                 
                 # save info or not now
-                if self._safe_execute_script("return (document.querySelector('button[type=\"submit\"]') !== null && (document.body.innerText.toLowerCase().includes('save info') || document.body.innerText.toLowerCase().includes('not now') || document.body.innerText.toLowerCase().includes('để sau')))"):
+                if self._safe_execute_script("return (document.querySelector('button[type=\"submit\"]') !== null && ('save info' in body_text || 'not now' in body_text || 'để sau' in body_text))", False):
                     return "LOGGED_IN_SUCCESS"
                 
                 
                 
                 # Want to subscribe or continue
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('subscribe')"):
+                if 'subscribe' in body_text:
+                    return "SUBSCRIBE_OR_CONTINUE"
+                    return "LOGGED_IN_SUCCESS"
+                if 'save your login info' in body_text or 'we can save your login info' in body_text or 'lưu thông tin đăng nhập' in body_text:
+                    return "LOGGED_IN_SUCCESS"
+                
+                # save info or not now
+                if self._safe_execute_script("return (document.querySelector('button[type=\"submit\"]') !== null && ('save info' in body_text || 'not now' in body_text || 'để sau' in body_text))", False):
+                    return "LOGGED_IN_SUCCESS"
+                
+                
+                
+                # Want to subscribe or continue
+                if 'subscribe' in body_text:
                     return "SUBSCRIBE_OR_CONTINUE"
                 
                 # Check if "get new code" option is available
-                if self._safe_execute_script("return document.body.innerText.toLowerCase().includes('get a new one') || document.body.innerText.toLowerCase().includes('get new code') || document.body.innerText.toLowerCase().includes('get a new code') || document.body.innerText.toLowerCase().includes('didn\\'t get a code') || document.body.innerText.toLowerCase().includes('didn\\'t receive') || document.body.innerText.toLowerCase().includes('resend') || document.body.innerText.toLowerCase().includes('send new code') || document.body.innerText.toLowerCase().includes('request new code')"):
+                if 'get a new one' in body_text or 'get new code' in body_text or 'get a new code' in body_text or 'didn\'t get a code' in body_text or 'didn\'t receive' in body_text or 'resend' in body_text or 'send new code' in body_text or 'request new code' in body_text:
                     return "CAN_GET_NEW_CODE"
                 
                 consecutive_failures = 0  # Reset on successful check
@@ -1814,9 +1828,8 @@ class InstagramExceptionStep:
             
             # Check for common checkpoint mail keywords that might have been missed
             try:
-                full_body = self._safe_execute_script("return document.body.innerText.toLowerCase();", "")
                 checkpoint_keywords = ["checkpoint", "verify", "verification", "security code", "confirmation code", "email verification", "mã xác nhận", "xác nhận email"]
-                if any(keyword in full_body for keyword in checkpoint_keywords):
+                if any(keyword in body_text for keyword in checkpoint_keywords):
                     print("   [Step 2] Found checkpoint-related keywords, likely checkpoint mail screen")
                     return "CHECKPOINT_MAIL"
             except:
