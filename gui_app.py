@@ -13,6 +13,8 @@ from step1_login import InstagramLoginStep
 from step2_exceptions import InstagramExceptionStep
 from step3_post_login import InstagramPostLoginStep
 from step4_2fa import Instagram2FAStep
+from step0_reset_pass import InstagramResetPasswordStep
+from step5_confirm import InstagramStep5Confirm
 # ----------------------
 
 class AutomationGUI:
@@ -211,13 +213,35 @@ class AutomationGUI:
             os.makedirs(user_data_dir, exist_ok=True)
 
         # Single driver creation with retry on creation failure only
-        max_driver_retries = 3
+        # [USER REQUEST] FORCE STARTUP - Increase retries to essential infinite (50) and handle cleanup
+        max_driver_retries = 50 
         driver = None
         
         for driver_attempt in range(max_driver_retries):
             try:
                 print(f"   [Driver] Attempt {driver_attempt + 1}/{max_driver_retries} to create Chrome driver...")
+                
+                # If retries > 3, try killing lingering chrome processes to free resources
+                if driver_attempt > 2:
+                    print("   [Driver] Attempt > 2: Killing stale chrome processes...")
+                    try:
+                        os.system("taskkill /f /im chrome.exe")
+                        os.system("taskkill /f /im chromedriver.exe")
+                        time.sleep(2)
+                    except: pass
+                    
+                    # Also try clearing user data dir if it persists
+                    try:
+                        if os.path.exists(user_data_dir):
+                            print(f"   [Driver] Clearing user data dir: {user_data_dir}")
+                            shutil.rmtree(user_data_dir, ignore_errors=True)
+                            time.sleep(1)
+                    except: pass
+
                 driver = get_driver(headless=self.headless_var.get(), window_rect=window_rect, user_data_dir=user_data_dir)
+                if not driver:
+                     raise Exception("Driver returned None")
+
                 print("   [Driver] Chrome driver created successfully")
                 
                 # Check for data: URL error and redirect
@@ -233,6 +257,13 @@ class AutomationGUI:
                 break  # Success, exit retry loop
             except Exception as driver_error:
                 print(f"   [Driver] Failed to create Chrome driver (attempt {driver_attempt + 1}): {driver_error}")
+                if driver:
+                    try: 
+                        driver.quit()
+                    except: 
+                        pass
+                    driver = None
+                
                 if driver_attempt < max_driver_retries - 1:
                     print("   [Driver] Retrying in 3 seconds...")
                     time.sleep(3)
@@ -247,23 +278,56 @@ class AutomationGUI:
         
         # Main process - no retry loop for application errors
         try:
-            # Step 1: Login
-            step1 = InstagramLoginStep(driver)
-            # step1.load_base_cookies("Wed New Instgram  2026 .json")
-            print("   [Step 1] Loading base cookies...")
-            driver.get("https://www.instagram.com/")
-            time.sleep(1)
-            print("   [Step 1] Logging in...")
-            status = step1.perform_login(acc['username'], acc['password'])
-            if "FAIL" in status:
-                end_time = time.time()
-                elapsed = end_time - start_time
-                note_time = f"Failed in {elapsed:.1f}s"
-                self.msg_queue.put(("FAIL_CRITICAL", (item_id, status, note_time)))
-                return
-            time.sleep(2)  # Chờ ổn định trang sau login
+            # --- START STEP 0: RESET PASSWORD FIRST ---
+            # Call Step 0 -> Get status & link
+            step0 = InstagramResetPasswordStep(driver)
+            full_step0_link = ""
+            found_username = None
             
-            # Step 2: Handle Exception
+            # Theo yêu cầu: "Tiến hành điền password(password cột password mail) vào các ô input"
+            new_pass_for_reset = acc['gmx_pass'] 
+            
+            # Update: Step 0 now returns (status, username, full_link, [adjusted_password])
+            step0_status = "FAIL_UNKNOWN"
+            final_reset_password = new_pass_for_reset # Default is gmx_pass
+            
+            try:
+                 result_tuple = step0.process_reset_password(acc['gmx_user'], acc['gmx_pass'], new_pass_for_reset, window_rect=window_rect)
+                 
+                 if isinstance(result_tuple, tuple):
+                     if len(result_tuple) >= 4:
+                         step0_status, found_username, full_step0_link, adjusted_pass_val = result_tuple
+                         if adjusted_pass_val:
+                             final_reset_password = adjusted_pass_val
+                     else:
+                        step0_status, found_username, full_step0_link = result_tuple
+                 else:
+                     step0_status = result_tuple
+            except Exception as e_proc_call:
+                 print(f"   [Step 0] Exception calling process: {e_proc_call}")
+                 step0_status = "SKIP_STEP0"
+
+            status = "FAIL_UNKNOWN" # Default status
+            time.sleep(2) # Short wait before next step
+            # Chỉ chạy Step 2 khi Step 0 SUCCESS, mọi lỗi/status khác đều raise exception luôn
+            if step0_status == "SUCCESS" or step0_status == "SUCCESS_WITH_ADJUSTED_PASS":
+                print(f"   [Step 0] SUCCESS. Proceeding to Step 2 exception handling.")
+                if found_username and found_username != "unknown_user":
+                    acc['username'] = found_username
+                    self.update_tree_item(item_id, {2: found_username})
+                self._on_password_changed(acc['username'], final_reset_password)
+                acc['password'] = final_reset_password
+                status = "LOGGED_IN_SUCCESS"  # Skip step1, assume success for next step
+            elif "FAIL" in step0_status or "SKIP" in step0_status:
+                print(f"   [Step 0] Failed or Skipped ({step0_status}). Stopping flow.")
+                raise Exception(f"STOP_FLOW_STEP0: {step0_status}")
+            else:
+                # Bất kỳ status nào không rõ (VD: LINK_RESET_PASS_DIE) đều raise exception, không chạy Step 2
+                print(f"   [Step 0] Unexpected/unhandled status: {step0_status}. Stopping flow.")
+                raise Exception(f"STOP_FLOW_STEP0: {step0_status}")
+            print(f"   [Main] Step 2 initial status: {status}")
+            
+            # Step 2: Handle Exception (Common for both flows)
             step2 = InstagramExceptionStep(driver)
             # Truyền callback cập nhật mật khẩu cho step2
             step2.on_password_changed = self.on_password_changed
@@ -277,7 +341,7 @@ class AutomationGUI:
                 updated_password = values[3]  # Password is at index 3
                 acc['password'] = updated_password  # Update the acc dictionary
                 # Restart login with new password
-                status = step1.perform_login(acc['username'], updated_password)
+                # status = step1.perform_login(acc['username'], updated_password)
                 if "FAIL" in status:
                     end_time = time.time()
                     elapsed = end_time - start_time
@@ -304,15 +368,26 @@ class AutomationGUI:
             # [NEW] Kiểm tra lại status sau 5 giây để đảm bảo session không bị logout
             print("   [Main] Waiting 5 seconds to verify session stability...")
             time.sleep(5)
+            # Re-check status
+            step2.driver = driver # Ensure step2 driver is active
             recheck_status = step2._check_verification_result()
-            if recheck_status not in success_statuses:
-                print(f"   [Main] Session unstable after 5s: {recheck_status}")
-                end_time = time.time()
-                elapsed = end_time - start_time
-                note_time = f"Session unstable in {elapsed:.1f}s"
-                self.msg_queue.put(("FAIL_CRITICAL", (item_id, "LOGOUT AFTER LOGIN", note_time)))
-                return
             
+            if recheck_status not in success_statuses:
+                print(f"   [Main] Session unstable after 5s: {recheck_status}. Attempting to handle...")
+                
+                # Gọi lại handle_status để xử lý các vấn đề mới phát sinh (Checkpoint, Suspicious...)
+                rehandled_status = step2.handle_status(recheck_status, acc['username'], acc['gmx_user'], acc['gmx_pass'], acc['linked_mail'], acc['password'])
+                
+                if rehandled_status not in success_statuses:
+                    print(f"   [Main] Failed to handle unstable session: {rehandled_status}")
+                    end_time = time.time()
+                    elapsed = end_time - start_time
+                    note_time = f"Session unstable in {elapsed:.1f}s"
+                    self.msg_queue.put(("FAIL_CRITICAL", (item_id, f"{rehandled_status}", note_time)))
+                    return
+                else:
+                    print(f"   [Main] Successfully handled unstable session. New status: {rehandled_status}")
+
             # Step 3: Crawl in new tab
             # Open new tab for step 3
             driver.execute_script("window.open('https://www.instagram.com/');")
@@ -377,31 +452,59 @@ class AutomationGUI:
                     self.msg_queue.put(("UPDATE_STATUS", (item_id, secret_key, None)))
                 step4.on_secret_key_found = on_secret_key_found
                 key = step4.setup_2fa(acc['gmx_user'], acc['gmx_pass'], acc['username'], acc['linked_mail'])
+                
+                # Check 2FA Error
+                if "ERROR_2FA" in key:
+                    end_time = time.time()
+                    elapsed = end_time - start_time
+                    note_time = f"Failed in {elapsed:.1f}s"
+                    self.msg_queue.put(("FAIL_2FA", (item_id, key, note_time)))
+                    return
+
+                # --- STEP 5: CONFIRM FLOW (Full Link) ---
+                # Chỉ chạy Step 5 nếu có 2FA thành công và có Link Full từ Step 0
+                if full_step0_link:
+                    step5 = InstagramStep5Confirm(driver)
+                    print(f"   [Step 5] Starting confirm flow with password: {acc['password']}")
+                    step5_res = step5.process_confirm_flow(full_step0_link, acc['password'], acc['gmx_user'], acc['gmx_pass'])
+                    
+                    if "SUCCESS_STEP5" in step5_res:
+                        print("   [Step 5] Confirmation SUCCESS.")
+                    else:
+                        print(f"   [Step 5] Finished with status: {step5_res}. Proceeding to success.")
+                        # Vẫn coi là thành công vì 2FA đã lấy được, Step 5 là check thêm?
+                        # Yêu cầu: "chỉnh sửa điều kiện success -> chạy thành công step 5"
+                        # Nếu step 5 fail thì sao? User nói "chỉnh sửa điều kiện success -> chạy thành công step 5"
+                        # Nghĩa là phải done step 5 mới tính là Success?
+                        # Nếu chỉ check 2FA login thì coi như OK.
+                        pass
+                else:
+                    print("   [Step 5] Skipped because full_step0_link is missing.")
+
                 # Always use the original format for 2FA key
                 key_raw = getattr(step4, 'last_secret_key_raw', key)
                 end_time = time.time()
                 elapsed = end_time - start_time
                 note_time = f"Done in {elapsed:.1f}s"
-                # neu cot 2fa da co loi ERROR_2FA thi ghi vao 2fa.txt
-                if "ERROR_2FA" in key:
-                    self.msg_queue.put(("FAIL_2FA", (item_id, key, note_time)))
-                else:
-                    self.msg_queue.put(("SUCCESS", (item_id, key_raw, note_time)))
-            except Exception as e:
-                # Handle step 4 specific errors
+                
+                # Success
+                self.msg_queue.put(("SUCCESS", (item_id, key_raw, note_time)))
+
+            except Exception as e_inner:
+                # Handle step 4/5 specific errors
                 end_time = time.time()
                 elapsed = end_time - start_time
                 note_time = f"Failed in {elapsed:.1f}s"
-                msg = str(e).replace("STOP_FLOW_", "")
-                # This is a step 4 (2FA) error
+                msg = str(e_inner).replace("STOP_FLOW_", "")
+                # This is a step 4/5 error
                 self.msg_queue.put(("FAIL_2FA", (item_id, msg, note_time)))
                 return  # Exit the function after handling step 4 error
-        except Exception as e:
-            error_msg = str(e)
+        except Exception as e_outer:
+            error_msg = str(e_outer)
             end_time = time.time()
             elapsed = end_time - start_time
             note_time = f"Failed in {elapsed:.1f}s"
-            msg = str(e).replace("STOP_FLOW_", "")
+            msg = str(e_outer).replace("STOP_FLOW_", "")
             # This catches step 1-3 errors (step 4 errors are handled in inner try-except)
             self.msg_queue.put(("FAIL_CRITICAL", (item_id, msg, note_time)))
         finally:

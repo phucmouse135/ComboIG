@@ -16,7 +16,7 @@ class InstagramPostLoginStep:
         3. Crawl Dữ liệu (Post, Follower, Following).
         4. Trích xuất Cookie mới.
         """
-        print(f"   [Step 3] Processing Post-Login for {username}...")
+        print(f"[{username}]   [Step 3] Processing Post-Login for {username}...")
         
         # 1. Xử lý các Popup/Màn hình chắn (Vòng lặp check)
         self._handle_interruptions()
@@ -90,6 +90,11 @@ class InstagramPostLoginStep:
                     time.sleep(1)
                     continue
                 
+                if self._handle_confirm_your_account():
+                    print("   [Step 3] Handled Confirm Your Account individually")
+                    time.sleep(1)
+                    continue
+                
                 try:
                     current_url = self.driver.current_url.lower()
                     if "ad_free_subscription" in current_url:
@@ -99,8 +104,15 @@ class InstagramPostLoginStep:
                         time.sleep(3)
                         return  # Exit after reload
                     
-                    body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
-                    if "want to subscribe or continue using our products free of charge with ads?" in body_text:
+                    # Check if body element exists before accessing
+                    try:
+                        body_element = self.driver.find_element(By.TAG_NAME, "body")
+                        body_text = body_element.text.lower()
+                    except Exception as body_e:
+                        print(f"   [Step 3] Body element not found, skipping text check: {body_e}")
+                        body_text = ""
+                    
+                    if body_text and "want to subscribe or continue using our products free of charge with ads?" in body_text:
                         print("   [Step 3] Detected ad subscription popup text. Reloading Instagram...")
                         self.driver.get("https://www.instagram.com/")
                         wait_dom_ready(self.driver, timeout=10)
@@ -108,7 +120,7 @@ class InstagramPostLoginStep:
                         return  # Exit after reload
                     
 
-                    if ("page isn’t working" in body_text or "http error" in body_text or
+                    if body_text and ("page isn’t working" in body_text or "http error" in body_text or
                         'something went wrong' in body_text or 'đã xảy ra sự cố' in body_text or
                         "this page isn’t working" in body_text or 'the site is temporarily unavailable' in body_text or
                         "reload" in body_text  or "useragent mismatch" in body_text):
@@ -141,19 +153,86 @@ class InstagramPostLoginStep:
                         'cookie': ['allow all cookies', 'cho phép tất cả'],
                         'popup': ['not now', 'lúc khác', 'cancel', 'ok', 'hủy'], 
                         'age_check': ['18 or older', '18 tuổi trở lên', 'trên 18 tuổi'],
-                        'account_center_check': ['choose an option', 'accounts center', 'use data across accounts'] 
+                        'account_center_check': ['choose an option', 'accounts center', 'use data across accounts', 'keep using your info across these accounts?'] 
                     };
                     const bodyText = (document.body && document.body.innerText.toLowerCase()) || '';
 
                     // --- ƯU TIÊN: POPUP "ACCOUNTS CENTER" ---
                     if (keywords.account_center_check.some(k => bodyText.includes(k))) {
-                        let buttons = document.querySelectorAll('button, div[role="button"], span');
+                        if (bodyText.includes('keep using your info across these accounts?')) {
+                             var found = false;
+                             
+                             // 1. Try to find the specific text element (Exact match first)
+                             var candidates = document.querySelectorAll("span, div, label");
+                             for (var el of candidates) {
+                                 if (el.offsetParent === null) continue;
+                                 var txt = el.innerText ? el.innerText.toLowerCase().trim() : "";
+                                 if (txt === "use info across accounts" || txt === "sử dụng thông tin trên các tài khoản") {
+                                     el.click();
+                                     if (el.closest("div[role='button']")) el.closest("div[role='button']").click();
+                                     found = true; 
+                                     break; 
+                                 }
+                             }
+                             
+                             // 2. Fallback: Click the first radio button (usually "Use info across accounts")
+                             if (!found) {
+                                 var radios = document.querySelectorAll("input[type='radio']");
+                                 if (radios.length > 0) {
+                                     radios[0].click();
+                                     found = true;
+                                 }
+                             }
+
+                             // 3. Click Next if we selected something or just try to click Next anyway
+                             setTimeout(() => {
+                                var buttons = document.querySelectorAll('button, div[role="button"]');
+                                for (var btn of buttons) {
+                                    var t = btn.innerText.toLowerCase().trim();
+                                    if (btn.offsetParent !== null && !btn.disabled && (t === 'next' || t === 'tiếp' || t === 'continue')) {
+                                        btn.click();
+                                    }
+                                }
+                             }, 1000); 
+                             
+                             return 'KEEP_INFO_USE_SELECTED';
+
+                        } else {
+                            let buttons = document.querySelectorAll('button, div[role="button"], span');
+                            for (let btn of buttons) {
+                                let t = btn.innerText.toLowerCase().trim();
+                                if (btn.offsetParent !== null && !btn.disabled && (t === 'next' || t === 'tiếp' || t === 'continue')) {
+                                    btn.click();
+                                    if (btn.tagName === 'SPAN' && btn.parentElement) btn.parentElement.click();
+                                    return 'ACCOUNTS_CENTER_NEXT';
+                                }
+                            }
+                        }
+                    }
+                    
+                    // --- POST VIOLATES COMMUNITY STANDARDS ---
+                    if (bodyText.includes('your post goes against our community standards') || 
+                        bodyText.includes('bài đăng của bạn vi phạm các tiêu chuẩn cộng đồng của chúng tôi') || 
+                        bodyText.includes('how we make decisions')) {
+                        let buttons = document.querySelectorAll('button, div[role="button"]');
                         for (let btn of buttons) {
-                            let t = btn.innerText.toLowerCase().trim();
-                            if (t === 'next' || t === 'tiếp' || t === 'continue') {
+                            if (btn.innerText.toLowerCase().trim() === 'ok') {
                                 btn.click();
-                                if (btn.tagName === 'SPAN' && btn.parentElement) btn.parentElement.click();
-                                return 'ACCOUNTS_CENTER_NEXT';
+                                return 'POST_VIOLATES_OK_CLICKED';
+                            }
+                        }
+                    }
+                    
+                    // --- UNUSUAL ACTIVITY DETECTED ---
+                    if (bodyText.includes('we suspect automated behavior on your account') || 
+                        bodyText.includes('prevent your account from being temporarily') || 
+                        bodyText.includes('verify you are a real person') || 
+                        bodyText.includes('suspicious activity')) {
+                        let buttons = document.querySelectorAll('button, div[role="button"]');
+                        for (let btn of buttons) {
+                            if (btn.innerText.toLowerCase().trim() === 'dismiss') {
+                                btn.click();
+                                return 'UNUSUAL_ACTIVITY_DETECTED';
                             }
                         }
                     }
@@ -279,6 +358,15 @@ class InstagramPostLoginStep:
                     elif action_result == 'AGE_CHECK_CLICKED': 
                         print("   [Step 3] Handled Age Verification (18+). Waiting...")
                         time.sleep(3)
+                    elif action_result == 'KEEP_INFO_MANAGE_SELECTED':
+                        print("   [Step 3] Selected manage accounts and clicked next. Waiting...")
+                        time.sleep(2)
+                    elif action_result == 'KEEP_INFO_USE_SELECTED':
+                        print("   [Step 3] Selected use info across accounts and clicked next. Waiting...")
+                        time.sleep(2)
+                    elif action_result == 'UNUSUAL_ACTIVITY_DETECTED':
+                        print("   [Step 3] Dismissed unusual activity popup. Waiting...")
+                        time.sleep(2)
                     else:
                         time.sleep(1.5)
                     continue
@@ -466,6 +554,53 @@ class InstagramPostLoginStep:
                 if 'allow all cookies' in b.text.lower() or 'cho phép tất cả' in b.text.lower():
                     b.click()
                     return True
+            return False
+        except:
+            return False
+
+    def _handle_confirm_your_account(self):
+        """Handle 'Confirm Your Account' popup individually."""
+        try:
+            time.sleep(0.5)
+            body_text = self.driver.find_element(By.TAG_NAME, 'body').text.lower()
+            if 'confirm your account' in body_text or 'xác nhận tài khoản của bạn' in body_text:
+                # 1. Click "Get started" / "Bắt đầu"
+                buttons = self.driver.find_elements(By.CSS_SELECTOR, 'button, div[role="button"]')
+                get_started_clicked = False
+                for b in buttons:
+                    if 'get started' in b.text.lower() or 'bắt đầu' in b.text.lower():
+                        b.click()
+                        get_started_clicked = True
+                        break
+                
+                if not get_started_clicked:
+                    # Try alternative selectors
+                    try:
+                        self.driver.find_element(By.CSS_SELECTOR, "button._acan._acap._acas").click()
+                        get_started_clicked = True
+                    except:
+                        pass
+                
+                wait_dom_ready(self.driver, timeout=10)
+                time.sleep(2)
+                
+                # 2. Select radio button "Use data across accounts" / "Sử dụng dữ liệu trên các tài khoản"
+                labels = self.driver.find_elements(By.CSS_SELECTOR, 'label')
+                for label in labels:
+                    if 'use data across accounts' in label.text.lower() or 'sử dụng dữ liệu trên các tài khoản' in label.text.lower():
+                        label.click()
+                        break
+                
+                time.sleep(1)
+                
+                # 3. Click "Next" / "Tiếp theo"
+                buttons = self.driver.find_elements(By.CSS_SELECTOR, 'button, div[role="button"]')
+                for b in buttons:
+                    if 'next' in b.text.lower() or 'tiếp theo' in b.text.lower():
+                        b.click()
+                        return True
+                
+                return True  # Even if next not clicked, we handled the popup
             return False
         except:
             return False

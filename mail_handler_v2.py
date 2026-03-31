@@ -1,14 +1,66 @@
-# mail_handler_v2.py
 import imaplib
 import email
 import re
 import time
 import socket
+import html
 from email.header import decode_header
+from email.utils import parseaddr
 
-# Cấu hình GMX
-IMAP_SERVER = "imap.gmx.net"
+# --- CẤU HÌNH GMX / MAIL.COM ---
 IMAP_PORT = 993
+GMX_HOST = "imap.gmx.net"
+MAIL_COM_HOST = "imap.mail.com"
+
+def _get_host(email_address):
+    if not email_address:
+        return GMX_HOST
+    return MAIL_COM_HOST if "@mail.com" in email_address.lower() else GMX_HOST
+
+# Danh sách folder cần quét
+TARGET_FOLDERS = ["Spam", "INBOX", "newsletters", "spam"]
+
+# --- CẤU HÌNH BỔ SUNG ---
+SENDER_FILTER = "Instagram"
+# Chuỗi subject bắt buộc (lowercase)
+TARGET_SUBJECTS = [
+    "we've made it easy to get back on instagram",
+    "chúng tôi giúp bạn dễ dàng đăng nhập lại trên instagram",
+    "is your instagram recovery code",
+    "reset your password", "get back on instagram", "recover your password",
+    "đặt lại mật khẩu", "truy cập lại vào instagram", "log in as"
+]
+
+# --- REGEX & CONFIG ---
+RE_USER_HI = re.compile(r'Hi\s+([a-zA-Z0-9_.]+),', re.IGNORECASE)
+RE_UID_LINK = re.compile(r'uid=([0-9]{6,30})')
+RE_RECOVERY_CODE = re.compile(r'(\d{8})', re.IGNORECASE)
+
+RESET_LINK_HREF_HINTS = [
+    "instagram.com/accounts/password/reset/confirm",
+    "instagram.com/accounts/password/reset",
+    "password/reset/confirm",
+    "one_click_login_email",
+    "deref-gmx.net/mail/client",
+    "redirecturl=",
+]
+
+CONFIRM_KEYWORDS = [
+    "password has been changed", "password changed",
+    "your instagram password has been changed", "your password has been changed",
+    "password was changed", "your password was changed",
+    "password reset successful", "password has been reset",
+    "your password has been reset",
+    "mật khẩu đã được thay đổi", "bạn vừa thay đổi mật khẩu",
+    "mật khẩu instagram của bạn đã được thay đổi", "bạn đã thay đổi mật khẩu instagram",
+    "bạn vừa đổi mật khẩu instagram", "bạn vừa đổi mật khẩu",
+    "mật khẩu đã được đặt lại", "mật khẩu của bạn đã được thay đổi",
+]
+
+SENDER_NAME = "instagram"
+IMAP_POLL_TIMEOUT = 30
+IMAP_POLL_INTERVAL = 1.5
+IMAP_MAX_FETCH_VERIFY = 5
 
 def _decode_str(header_value):
     if not header_value: return ""
@@ -24,113 +76,364 @@ def _decode_str(header_value):
     except:
         return str(header_value)
 
-def _fetch_latest_unseen_mail(gmx_user, gmx_pass, subject_keywords, target_username=None, target_email=None, loop_duration=45):
-    if not gmx_user or not gmx_pass: return None
-    if "@" not in gmx_user: gmx_user += "@gmx.net"
+def _decode_header_fast(header_value):
+    """Giải mã header nhanh."""
+    if not header_value: return ""
+    try:
+        decoded_list = decode_header(header_value)
+        result = []
+        for content, encoding in decoded_list:
+            if isinstance(content, bytes):
+                result.append(content.decode(encoding or "utf-8", errors="ignore"))
+            else:
+                result.append(str(content))
+        return "".join(result)
+    except:
+        return str(header_value)
 
+def _get_body_fast(msg):
+    """Lấy body nhanh."""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() in ["text/html", "text/plain"]:
+                try:
+                    return part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                except: pass
+    else:
+        try:
+            return msg.get_payload(decode=True).decode("utf-8", errors="ignore")
+        except: pass
+    return ""
+
+def _is_reset_href(href):
+    if not href: return False
+    href_low = href.lower()
+    if "reset" not in href_low and "password" not in href_low and "one_click_login_email" not in href_low:
+        return False
+    return any(hint in href_low for hint in RESET_LINK_HREF_HINTS)
+
+def _extract_reset_link_from_html(raw_html):
+    if not raw_html: return ""
+    raw_html = html.unescape(raw_html)
+    for match in re.finditer(r'(?:href|data-href|data-url)\s*=\s*["\']([^"\']+)["\']', raw_html, re.IGNORECASE):
+        href = match.group(1).strip()
+        if _is_reset_href(href): return href
+    for match in re.finditer(r"https?://[^\s\"'>]+", raw_html, re.IGNORECASE):
+        href = match.group(1).strip()
+        if _is_reset_href(href): return href
+    return ""
+
+def _text_contains_confirm(text, ig_user=None):
+    if not text: return False
+    text_low = text.lower()
+    if ig_user:
+        ig_user_low = ig_user.strip().lower()
+        if ig_user_low and ig_user_low not in text_low: return False
+    return any(kw in text_low for kw in CONFIRM_KEYWORDS)
+
+def _fetch_latest_unseen_mail(email_user, email_pass, subject_keywords, target_username=None, target_email=None, loop_duration=45):
+    if not email_user or not email_pass: return None
+
+    host = _get_host(email_user)
     mail = None
     start_time = time.time()
-    code_pattern = re.compile(r'\b(\d{6,8})\b')
+
+    code_pattern = re.compile(r'(?<![._\-\d])\b(\d{6,8}|\d{3}\s\d{3})\b(?![._\-\d])')
 
     try:
-        socket.setdefaulttimeout(30)  # Increased timeout
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+        socket.setdefaulttimeout(30)
+        mail = imaplib.IMAP4_SSL(host, IMAP_PORT)
         try:
-            mail.login(gmx_user, gmx_pass)
+            mail.login(email_user, email_pass)
         except Exception as e:
             if any(k in str(e).lower() for k in ["authentication failed", "login failed", "credentials"]):
-                raise Exception("GMX_DIE")
+                raise Exception("LOGIN_DIE")
             raise e
 
-        print(f"   [IMAP] Connected. Scanning for User: {target_username} | Mail: {target_email}... (timeout: {loop_duration}s)")
-
         while time.time() - start_time < loop_duration:
-            try:
-                mail.select("INBOX") 
-                status, messages = mail.uid('search', None, '(UNSEEN FROM "Instagram")')
-                
-                if status != "OK" or not messages[0]:
-                    time.sleep(2.5); continue
+            for folder_name in TARGET_FOLDERS:
+                try:
+                    status, _ = mail.select(f'"{folder_name}"', readonly=False)
+                    if status != "OK": continue
 
-                mail_ids = messages[0].split()
-                mail_ids.sort(key=int, reverse=True)
+                    status, messages = mail.search(None, 'ALL')
+                    if status != "OK" or not messages[0]: continue 
 
-                for mail_id in mail_ids[:3]:
-                    # --- LỚP 1: Check Header ---
-                    _, msg_header = mail.uid('fetch', mail_id, '(BODY.PEEK[HEADER])')
-                    header_content = email.message_from_bytes(msg_header[0][1])
+                    mail_ids = messages[0].split()
+                    recent_ids = mail_ids[-6:]
+                    recent_ids.reverse()
+
+                    for mail_id in recent_ids:
+                        _, fetch_data = mail.fetch(mail_id, '(BODY.PEEK[HEADER] FLAGS)')
+                        
+                        is_read = False
+                        for item in fetch_data:
+                            if isinstance(item, bytes):
+                                if b'\\Seen' in item or b'\\SEEN' in item: is_read = True; break
+                            elif isinstance(item, tuple) and len(item) > 0:
+                                if b'\\Seen' in item[0] or b'\\SEEN' in item[0]: is_read = True; break
+                        
+                        if is_read: continue 
+
+                        msg_header = None
+                        for item in fetch_data:
+                            if isinstance(item, tuple):
+                                msg_header = email.message_from_bytes(item[1])
+                                break
+                        if not msg_header: continue
+
+                        subject = _decode_str(msg_header.get("Subject", "")).lower()
+                        sender = _decode_str(msg_header.get("From", "")).lower()
+                        to_addr = _decode_str(msg_header.get("To", "")).lower()
+
+                        if "instagram" not in sender: continue
+                        if not any(k.lower() in subject for k in subject_keywords): continue 
+                        if target_email and target_email.lower().strip() not in to_addr: continue
+                        
+                        try: mail.store(mail_id, '+FLAGS', '\\Seen')
+                        except: pass
+
+                        _, msg_data = mail.fetch(mail_id, "(BODY.PEEK[])") 
+                        full_msg = email.message_from_bytes(msg_data[0][1])
+                        body = ""
+                        if full_msg.is_multipart():
+                            for part in full_msg.walk():
+                                ctype = part.get_content_type()
+                                if ctype == "text/plain":
+                                    body += part.get_payload(decode=True).decode('utf-8', errors='ignore'); break
+                                elif ctype == "text/html":
+                                     body += part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                        else:
+                            body = full_msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+                        
+                        if not body: body = ""
+
+                        clean_body = re.sub(r'<[^>]+>', ' ', body)
+                        clean_body_lower = clean_body.lower()
+
+                        if target_username:
+                            u_name = target_username.lower().strip()
+                            if u_name:
+                                clean_body_lower = clean_body_lower.replace(u_name, "")
+                            u_name_no_dot = u_name.replace(".", "").replace("_", "")
+                            if u_name_no_dot:
+                                clean_body_lower = clean_body_lower.replace(u_name_no_dot, "")
+
+                        matches = code_pattern.findall(clean_body_lower)
+                        
+                        if matches:
+                            for code_candidate in matches:
+                                final_code = code_candidate.replace(" ", "")
+                                if len(final_code) in [6, 8]:
+                                    if final_code in ["2024", "2025", "2026", "2027"]: 
+                                        continue
+                                    if target_username and final_code in target_username.replace(".", ""):
+                                        continue
+
+                                    return final_code
                     
-                    subject = _decode_str(header_content.get("Subject", "")).lower()
-                    sender = _decode_str(header_content.get("From", "")).lower()
-                    to_addr = _decode_str(header_content.get("To", "")).lower() # Lấy địa chỉ người nhận
-
-                    is_relevant = any(k.lower() in subject for k in subject_keywords)
-                    if not is_relevant: continue 
-
-                    # MARK SEEN NGAY LẬP TỨC (Chống đọc lại)
-                    try: 
-                        mail.uid('store', mail_id, '+FLAGS', '\\Seen')
-                        print(f"   [IMAP] Marked mail {mail_id} as seen")
-                    except Exception as e:
-                        print(f"   [IMAP] Failed to mark seen: {e}")
-
-                    # --- LỚP 2: CHECK NGƯỜI NHẬN (QUAN TRỌNG NHẤT) ---
-                    # Nếu có truyền vào target_email (linked_mail), bắt buộc phải khớp
-                    if target_email:
-                        clean_target_mail = target_email.lower().strip()
-                        if clean_target_mail not in to_addr:
-                            print(f"   [IMAP] Skipped mail {mail_id}. 'To': {to_addr} != Target: {clean_target_mail}")
-                            continue
-                    
-                    # --- LỚP 3: Tải Body ---
-                    _, msg_data = mail.uid('fetch', mail_id, "(RFC822)")
-                    full_msg = email.message_from_bytes(msg_data[0][1])
-                    body = ""
-                    if full_msg.is_multipart():
-                        for part in full_msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                body += part.get_payload(decode=True).decode('utf-8', errors='ignore'); break
-                    else:
-                        body = full_msg.get_payload(decode=True).decode('utf-8', errors='ignore')
-                    
-                    if not body: body = ""
-                    
-                    # --- LỚP 4: Validate Username (Fallback nếu không có target_email) ---
-                    # Chỉ check username nếu không có target_email (vì mail tối giản không có username)
-                    if target_username and not target_email:
-                        if target_username.lower().replace("@","") not in body.lower():
-                            print(f"   [IMAP] Skipped mail (Username mismatch).")
-                            continue
-
-                    # --- LỚP 5: Lấy Code ---
-                    match = code_pattern.search(body)
-                    if match:
-                        code = match.group(1)
-                        print(f"   [IMAP] FOUND CODE: {code} for {target_username}")
-                        return code
-                    
-            except Exception as loop_e:
-                print(f"   [IMAP Loop Warn] {loop_e}"); time.sleep(2)
+                except Exception:
+                    continue
+            
+            time.sleep(2.5)
+            try: mail.noop()
+            except: pass
         
-        elapsed = time.time() - start_time
-        print(f"   [IMAP] Timeout after {elapsed:.1f}s: No verification code found for {target_username}")
-        print("   [IMAP] Possible reasons: Instagram didn't send email, email delayed, or wrong email address")
         return None
 
     except Exception as e:
-        if str(e) == "GMX_DIE": raise e
-        print(f"   [IMAP Error] {e}"); return None
+        if "LOGIN_DIE" in str(e): raise e
+        return None
     finally:
         if mail:
             try: mail.close(); mail.logout()
             except: pass
 
-# --- UPDATE API: Thêm tham số target_email ---
 
 def get_verify_code_v2(gmx_user, gmx_pass, target_ig_username, target_email=None):
-    keywords = ["verify", "xác thực", "confirm", "code", "security", "mã bảo mật", "is your instagram code"]
+    keywords = ["verify", "xác thực", "confirm", "code", "security", "mã bảo mật", "is your instagram code", "bạn vừa yêu cầu"]
     return _fetch_latest_unseen_mail(gmx_user, gmx_pass, keywords, target_ig_username, target_email, loop_duration=30)
 
 def get_2fa_code_v2(gmx_user, gmx_pass, target_ig_username, target_email=None):
     keywords = ["authenticate", "two-factor", "security", "bảo mật", "2fa", "login code", "mã đăng nhập"]
     return _fetch_latest_unseen_mail(gmx_user, gmx_pass, keywords, target_ig_username, target_email, loop_duration=30)
+
+
+def verify_account_live(email_login, password):
+    mail = None
+    max_retries = 3
+    retry_delay = 2
+    host = _get_host(email_login)
+    
+    for attempt in range(max_retries):
+        try:
+            mail = imaplib.IMAP4_SSL(host, IMAP_PORT)
+            mail.login(email_login, password)
+            break 
+        except Exception as e:
+            error_msg = str(e)
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            else:
+                return f"Login Mail Failed after {max_retries} attempts: {error_msg}"
+    
+    try:
+        mail.select("INBOX", readonly=True) 
+
+        start_time = time.time()
+        timeout = IMAP_POLL_TIMEOUT
+        found_data = None
+
+        while time.time() - start_time < timeout:
+            try:
+                status, messages = mail.search(None, f'(FROM "{SENDER_FILTER}")')
+                
+                if status != "OK" or not messages[0]:
+                    status, messages = mail.search(None, "ALL") # Fallback for GMX
+                    if status != "OK" or not messages[0]:
+                        time.sleep(2)
+                        continue
+
+                mail_ids = messages[0].split()
+                recent_ids = mail_ids[-10:] 
+                
+                for mid in reversed(recent_ids):
+                    try:
+                        _, data = mail.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+                        
+                        raw_header = data[0][1]
+                        msg_header = email.message_from_bytes(raw_header)
+                        subject = _decode_header_fast(msg_header["Subject"]).lower()
+
+                        is_target = any(k in subject for k in TARGET_SUBJECTS)
+                        if not is_target:
+                            continue 
+                        
+                        _, data_body = mail.fetch(mid, "(BODY.PEEK[])")
+                        msg_body = email.message_from_bytes(data_body[0][1])
+                        
+                        body_content = _get_body_fast(msg_body)
+                        
+                        user_extracted = ""
+                        uid_extracted = ""
+                        link_extracted = ""
+                        
+                        m_user = RE_USER_HI.search(body_content)
+                        if m_user: user_extracted = m_user.group(1).lower()
+                        
+                        m_uid = RE_UID_LINK.search(body_content)
+                        if m_uid: uid_extracted = m_uid.group(1)
+                        
+                        link_extracted = _extract_reset_link_from_html(body_content)
+                        
+                        recovery_code_match = RE_RECOVERY_CODE.search(body_content)
+                        if recovery_code_match:
+                            if not link_extracted: 
+                                link_extracted = f"code:{recovery_code_match.group(1)}"
+
+                        if user_extracted or uid_extracted or link_extracted:
+                            found_data = f"success|USER={user_extracted}|UID={uid_extracted}|LINK={link_extracted}"
+                            break 
+                    
+                    except Exception:
+                        continue 
+                
+                if found_data:
+                    break 
+                
+                time.sleep(IMAP_POLL_INTERVAL)
+                mail.noop() 
+
+            except Exception as e:
+                error_str = str(e).lower()
+                if "socket" in error_str or "eof" in error_str or "connection" in error_str:
+                    time.sleep(3)
+                    continue
+                else:
+                    time.sleep(1)
+                    continue
+
+        try: mail.logout()
+        except: pass
+
+        if found_data:
+            return found_data
+             
+        return "Fail: Timeout - Reset Mail not found"
+
+    except Exception as e:  
+        return f"Error System: {str(e)}"
+
+def verify_password_changed(email_login, password, ig_user=None, timeout=IMAP_POLL_TIMEOUT):
+    if not email_login or not password: return False
+    
+    imap_conn = None
+    max_retries = 3
+    retry_delay = 2
+    host = _get_host(email_login)
+    
+    for attempt in range(max_retries):
+        try:
+            imap_conn = imaplib.IMAP4_SSL(host, IMAP_PORT)
+            imap_conn.login(email_login, password)
+            break
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            else:
+                return False
+
+    try:
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            for folder in TARGET_FOLDERS:
+                try:
+                    status, _ = imap_conn.select(f'"{folder}"', readonly=True)
+                    if status != "OK": continue 
+                    
+                    status, data = imap_conn.search(None, f'(FROM "{SENDER_FILTER}")')
+                    if status != "OK" or not data[0]:
+                        status, data = imap_conn.search(None, "ALL") # Fallback
+
+                    if status == "OK" and data[0]:
+                        mail_ids = data[0].split()
+                        recent_ids = mail_ids[-IMAP_MAX_FETCH_VERIFY:]
+                        
+                        for msg_id in reversed(recent_ids):
+                            subject = ""
+                            try:
+                                _, d = imap_conn.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+                                msg = email.message_from_bytes(d[0][1])
+                                subject = _decode_header_fast(msg["Subject"]).lower()
+                            except: continue
+
+                            is_subject_ok = any(kw in subject for kw in CONFIRM_KEYWORDS)
+                            if is_subject_ok:
+                                return True 
+
+                            try:
+                                _, d_body = imap_conn.fetch(msg_id, "(BODY.PEEK[])")
+                                msg_obj = email.message_from_bytes(d_body[0][1])
+                                body = _get_body_fast(msg_obj).lower()
+                                
+                                is_body_ok = any(kw in body for kw in CONFIRM_KEYWORDS)
+                                if is_body_ok:
+                                    return True
+                            except: continue
+                                
+                except Exception:
+                    continue 
+            
+            time.sleep(IMAP_POLL_INTERVAL)
+            try: imap_conn.noop() 
+            except: pass
+            
+    except Exception:
+        pass
+    finally:
+        try: imap_conn.logout()
+        except: pass
+        
+    return False
